@@ -56,15 +56,27 @@ jobs:
           $ref  = "${{ github.ref }}"
           $rtag = "${{ github.event.release.tag_name }}"
 
+          # la versione di riferimento e' quella scritta nel csproj: un posto solo
+          # da aggiornare, cosi' installer ed eseguibile non possono divergere
+          $base = '0.0.0'
+          $csprojPath = "${{ steps.paths.outputs.csproj }}"
+          if (Test-Path $csprojPath) {
+            $m = Select-String -Path $csprojPath -Pattern '<Version>\s*([^<]+?)\s*</Version>' |
+                 Select-Object -First 1
+            if ($m) { $base = $m.Matches[0].Groups[1].Value }
+          }
+          Write-Host "Versione nel csproj: $base"
+
           if (-not [string]::IsNullOrEmpty($rtag)) {
             $v = $rtag -replace '^[vV]',''            # release creata dal sito
           } elseif ($ref -like 'refs/tags/*') {
             $v = ($ref -replace '^refs/tags/','') -replace '^[vV]',''
           } else {
-            $v = "1.4.0-dev.${{ github.run_number }}"
+            $v = "$base-dev.${{ github.run_number }}"
           }
           $num = ($v -split '-')[0]
-          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '1.4.0' }
+          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = $base }
+          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '0.0.0' }
           "version=$v"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "numeric=$num"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Versione: $v (assembly $num)"

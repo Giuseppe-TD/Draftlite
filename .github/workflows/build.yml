@@ -61,10 +61,10 @@ jobs:
           } elseif ($ref -like 'refs/tags/*') {
             $v = ($ref -replace '^refs/tags/','') -replace '^[vV]',''
           } else {
-            $v = "1.2.0-dev.${{ github.run_number }}"
+            $v = "1.4.0-dev.${{ github.run_number }}"
           }
           $num = ($v -split '-')[0]
-          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '1.2.0' }
+          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '1.4.0' }
           "version=$v"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "numeric=$num"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Versione: $v (assembly $num)"

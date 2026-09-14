@@ -65,7 +65,10 @@ public static class PdfExporter
                     ? rightEdge - line.Text.Length * CharW
                     : left + line.Col * CharW;
 
-                pdf.DrawText(x, y, line.Text, line.Bold);
+                if (line.Runs != null && line.Runs.Count > 0)
+                    pdf.DrawRuns(x, y, line.Runs, line.Bold);
+                else
+                    pdf.DrawText(x, y, line.Text, line.Bold);
 
                 if (!string.IsNullOrEmpty(line.SceneNumber))
                 {

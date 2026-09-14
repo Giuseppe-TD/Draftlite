@@ -23,8 +23,13 @@ public sealed class AppSettings
     public bool AutoSave { get; set; } = true;
 
     public string FontFamily { get; set; } = "Courier New";
-    public string ThemeName { get; set; } = "Chiaro";
+    public string ThemeName { get; set; } = "Carta";
     public bool Typewriter { get; set; } = false;
+
+    /// <summary>Menu degli elementi quando si va a capo.</summary>
+    public bool AskElementOnEnter { get; set; } = true;
+    /// <summary>Numero di pagina e linea di stacco nel margine del foglio.</summary>
+    public bool ShowPageBreaks { get; set; } = true;
 
     /// <summary>Quante copie datate tenere accanto al file a ogni salvataggio.</summary>
     public int BackupCount { get; set; } = 10;

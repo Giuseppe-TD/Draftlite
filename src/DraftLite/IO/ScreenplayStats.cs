@@ -82,7 +82,7 @@ public sealed class ScreenplayStats
         foreach (var e in els)
         {
             var style = ElementStyle.Get(e.Type);
-            int lineCount = Paginator.Wrap(e.Text, style.Cols).Count + style.SpaceBeforeLines;
+            int lineCount = StyledText.Wrap(e.Text, style.Cols).Count + style.SpaceBeforeLines;
 
             switch (e.Type)
             {
@@ -91,7 +91,7 @@ public sealed class ScreenplayStats
                     currentScene = new SceneStat
                     {
                         Number = num,
-                        Heading = e.Text,
+                        Heading = StyledText.Plain(e.Text),
                         Synopsis = e.Synopsis,
                         Page = pageOfScene.TryGetValue(num, out var pg) ? pg : 0
                     };
@@ -156,5 +156,8 @@ public sealed class ScreenplayStats
     }
 
     private static int CountWords(string s)
-        => string.IsNullOrWhiteSpace(s) ? 0 : s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+    {
+        s = StyledText.Plain(s);
+        return string.IsNullOrWhiteSpace(s) ? 0 : s.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).Length;
+    }
 }

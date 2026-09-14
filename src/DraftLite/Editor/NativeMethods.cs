@@ -43,6 +43,49 @@ internal struct PARAFORMAT2
     }
 }
 
+[StructLayout(LayoutKind.Sequential, Pack = 4, CharSet = CharSet.Unicode)]
+internal struct CHARFORMAT2
+{
+    public int cbSize;
+    public uint dwMask;
+    public uint dwEffects;
+    public int yHeight;
+    public int yOffset;
+    public int crTextColor;
+    public byte bCharSet;
+    public byte bPitchAndFamily;
+    [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+    public char[] szFaceName;
+    public ushort wWeight;
+    public short sSpacing;
+    public int crBackColor;
+    public int lcid;
+    public uint dwReserved;
+    public short sStyle;
+    public short wKerning;
+    public byte bUnderlineType;
+    public byte bAnimation;
+    public byte bRevAuthor;
+    public byte bReserved1;
+
+    public static CHARFORMAT2 Create()
+    {
+        var cf = new CHARFORMAT2
+        {
+            cbSize = Marshal.SizeOf(typeof(CHARFORMAT2)),
+            szFaceName = new char[32]
+        };
+        return cf;
+    }
+
+    public void SetFace(string name)
+    {
+        szFaceName = new char[32];
+        if (string.IsNullOrEmpty(name)) return;
+        for (int i = 0; i < Math.Min(31, name.Length); i++) szFaceName[i] = name[i];
+    }
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal struct POINT
 {
@@ -62,7 +105,17 @@ internal static class NativeMethods
     public const int EM_GETSCROLLPOS = WM_USER + 221;   // 0x4DD
     public const int EM_SETSCROLLPOS = WM_USER + 222;   // 0x4DE
 
+    public const int EM_GETCHARFORMAT = WM_USER + 58; // 0x43A
+    public const int EM_SETCHARFORMAT = WM_USER + 68; // 0x444
+
     public const int SCF_SELECTION = 0x0001;
+    public const int SCF_ALL = 0x0004;
+
+    public const uint CFM_BOLD = 0x00000001;
+    public const uint CFM_ITALIC = 0x00000002;
+    public const uint CFM_UNDERLINE = 0x00000004;
+    public const uint CFM_SIZE = 0x80000000;
+    public const uint CFM_FACE = 0x20000000;
 
     public const uint PFM_STARTINDENT = 0x00000001;
     public const uint PFM_RIGHTINDENT = 0x00000002;
@@ -80,6 +133,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref POINT lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, ref CHARFORMAT2 lParam);
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);

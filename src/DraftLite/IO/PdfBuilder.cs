@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using DraftLite.Model;
 
 namespace DraftLite.IO;
 
@@ -48,13 +49,40 @@ public sealed class PdfBuilder
         if (string.IsNullOrEmpty(text)) return;
 
         double y = HeightPt - yFromTopPt;
-        string font = bold ? "F2" : italic ? "F3" : "F1";
+        string font = FontFor(bold, italic);
 
         Raw("q ");
         if (gray > 0) Raw(Num(gray) + " g ");
         Raw("BT /" + font + " " + Num(fontSize) + " Tf 1 0 0 1 " + Num(xPt) + " " + Num(y) + " Tm ");
         WriteLiteral(text);
         Raw(" Tj ET Q\n");
+    }
+
+    private static string FontFor(bool bold, bool italic)
+        => bold && italic ? "F4" : bold ? "F2" : italic ? "F3" : "F1";
+
+    /// <summary>
+    /// Una riga fatta di pezzi con formattazione diversa: ogni pezzo avanza di
+    /// una larghezza fissa, perche' il Courier ha il passo costante.
+    /// </summary>
+    public void DrawRuns(double xPt, double yFromTopPt, IList<TextRun> runs,
+                         bool forceBold = false, double fontSize = DefaultFontSize)
+    {
+        if (runs == null || runs.Count == 0) return;
+        double charWidth = fontSize * 0.6;
+        double x = xPt;
+
+        foreach (var run in runs)
+        {
+            if (string.IsNullOrEmpty(run.Text)) continue;
+            DrawText(x, yFromTopPt, run.Text, forceBold || run.Bold, run.Italic, 0, fontSize);
+
+            double w = run.Text.Length * charWidth;
+            if (run.Underline && run.Text.Trim().Length > 0)
+                DrawLine(x, yFromTopPt + fontSize * 0.16, x + w, yFromTopPt + fontSize * 0.16, 0, 0.6);
+
+            x += w;
+        }
     }
 
     /// <summary>Testo ruotato attorno al suo punto iniziale: serve per la filigrana in diagonale.</summary>
@@ -164,7 +192,7 @@ public sealed class PdfBuilder
         var objects = new List<byte[]>();
 
         int pageCount = _pages.Count;
-        int firstPageObj = 6;   // 1 catalog, 2 pages, 3..5 font
+        int firstPageObj = 7;   // 1 catalog, 2 pages, 3..6 font
 
         objects.Add(Ascii("<< /Type /Catalog /Pages 2 0 R >>"));
 
@@ -179,8 +207,9 @@ public sealed class PdfBuilder
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"));
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>"));
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Oblique /Encoding /WinAnsiEncoding >>"));
+        objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier-BoldOblique /Encoding /WinAnsiEncoding >>"));
 
-        string resources = "<< /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R >> >>";
+        string resources = "<< /Font << /F1 3 0 R /F2 4 0 R /F3 5 0 R /F4 6 0 R >> >>";
         string mediaBox = "[0 0 " + Num(WidthPt) + " " + Num(HeightPt) + "]";
 
         for (int i = 0; i < pageCount; i++)

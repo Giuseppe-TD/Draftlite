@@ -9,12 +9,15 @@ namespace DraftLite.IO;
 public sealed class LayoutLine
 {
     public string Text = string.Empty;
+    /// <summary>Pezzi formattati della riga (grassetto/corsivo/sottolineato).</summary>
+    public List<TextRun> Runs;
     public int Row;            // riga 0-based dentro la pagina
     public int Col;            // colonna 0-based in caratteri dal margine sinistro
     public bool Bold;
     public bool RightAlign;    // allineata al margine destro (transizioni)
     public string SceneNumber; // numero scena da stampare ai lati, se richiesto
     public bool Revised;       // riga cambiata dall'ultima bozza: asterisco a margine
+    public int ElementIndex = -1;  // elemento di provenienza (serve all'editor per le interruzioni)
 }
 
 public sealed class LayoutPage
@@ -48,6 +51,7 @@ public static class Paginator
         int row = 0;
         int maxRows = Math.Max(10, setup.LinesPerPage);
         int sceneCount = 0;
+        int currentElement = 0;
 
         void NewPage()
         {
@@ -56,12 +60,14 @@ public static class Paginator
             row = 0;
         }
 
-        void Emit(string text, ElementStyle st, bool rev, string sceneNumber = null, int? colOverride = null)
+        void EmitRuns(List<TextRun> runs, ElementStyle st, bool rev, string sceneNumber = null, int? colOverride = null)
         {
             page.Lines.Add(new LayoutLine
             {
-                Text = text,
+                Text = StyledText.LineText(runs),
+                Runs = runs,
                 Row = row++,
+                ElementIndex = currentElement,
                 Col = colOverride ?? st.Col,
                 Bold = st.Bold,
                 RightAlign = st.RightAlign && colOverride == null,
@@ -70,10 +76,14 @@ public static class Paginator
             });
         }
 
+        void Emit(string text, ElementStyle st, bool rev, string sceneNumber = null, int? colOverride = null)
+            => EmitRuns(new List<TextRun> { new TextRun(text) }, st, rev, sceneNumber, colOverride);
+
         int i = 0;
         while (i < els.Count)
         {
             var e = els[i];
+            currentElement = i;
 
             // ---- battuta: personaggio + parentetiche + dialogo
             if (e.Type == ElementType.Character)
@@ -114,7 +124,7 @@ public static class Paginator
 
             // ---- elemento semplice
             var style = ElementStyle.Get(e.Type);
-            var wrapped = Wrap(e.Text, style.Cols);
+            var wrapped = StyledText.Wrap(e.Text, style.Cols);
             int space = row == 0 ? 0 : style.SpaceBeforeLines;
             int keepWith = e.Type == ElementType.SceneHeading ? 2 : 0;
 
@@ -136,7 +146,7 @@ public static class Paginator
             foreach (var line in wrapped)
             {
                 if (row >= maxRows) NewPage();
-                Emit(line, style, revised[i], sn);
+                EmitRuns(line, style, revised[i], sn);
                 sn = null;
             }
             i++;
@@ -146,14 +156,14 @@ public static class Paginator
         void EmitDialogue(List<ScreenElement> group, List<bool> groupRev)
         {
             var chStyle = ElementStyle.Get(ElementType.Character);
-            string name = group[0].Text;
+            string name = StyledText.Plain(group[0].Text);
             bool nameRev = groupRev[0];
 
-            var speech = new List<(string Text, ElementStyle Style, bool IsParen, bool Rev)>();
+            var speech = new List<(List<TextRun> Runs, ElementStyle Style, bool IsParen, bool Rev)>();
             for (int k = 1; k < group.Count; k++)
             {
                 var st = ElementStyle.Get(group[k].Type);
-                foreach (var l in Wrap(group[k].Text, st.Cols))
+                foreach (var l in StyledText.Wrap(group[k].Text, st.Cols))
                     speech.Add((l, st, group[k].Type == ElementType.Parenthetical, groupRev[k]));
             }
 
@@ -183,7 +193,7 @@ public static class Paginator
                 if (remaining <= canFit)
                 {
                     for (int k = 0; k < remaining; k++)
-                        Emit(speech[pos + k].Text, speech[pos + k].Style, speech[pos + k].Rev);
+                        EmitRuns(speech[pos + k].Runs, speech[pos + k].Style, speech[pos + k].Rev);
                     pos = speech.Count;
                     break;
                 }
@@ -199,7 +209,7 @@ public static class Paginator
                 }
 
                 for (int k = 0; k < take; k++)
-                    Emit(speech[pos + k].Text, speech[pos + k].Style, speech[pos + k].Rev);
+                    EmitRuns(speech[pos + k].Runs, speech[pos + k].Style, speech[pos + k].Rev);
                 pos += take;
 
                 Emit("(MORE)", chStyle, false);
@@ -213,18 +223,18 @@ public static class Paginator
         {
             var chStyle = ElementStyle.Get(ElementType.Character);
 
-            List<(string Text, int Col, bool Rev, bool IsName)> Column(List<ScreenElement> g, List<bool> rev, int col)
+            List<(List<TextRun> Runs, int Col, bool Rev, bool IsName)> Column(List<ScreenElement> g, List<bool> rev, int col)
             {
-                var lines = new List<(string, int, bool, bool)>();
-                var name = g[0].Text;
+                var lines = new List<(List<TextRun>, int, bool, bool)>();
+                var name = StyledText.Plain(g[0].Text);
                 int nameCol = col + Math.Max(0, (DualWidth - name.Length) / 2);
-                lines.Add((name, nameCol, rev[0], true));
+                lines.Add((new List<TextRun> { new TextRun(name) }, nameCol, rev[0], true));
 
                 for (int k = 1; k < g.Count; k++)
                 {
                     bool paren = g[k].Type == ElementType.Parenthetical;
                     int width = paren ? DualWidth - 4 : DualWidth;
-                    foreach (var l in Wrap(g[k].Text, width))
+                    foreach (var l in StyledText.Wrap(g[k].Text, width))
                         lines.Add((l, col + (paren ? 2 : 0), rev[k], false));
                 }
                 return lines;
@@ -246,15 +256,15 @@ public static class Paginator
                 if (k < left.Count)
                     page.Lines.Add(new LayoutLine
                     {
-                        Text = left[k].Text, Row = r, Col = left[k].Col,
-                        Revised = left[k].Rev
+                        Text = StyledText.LineText(left[k].Runs), Runs = left[k].Runs,
+                        Row = r, Col = left[k].Col, Revised = left[k].Rev
                     });
 
                 if (k < right.Count)
                     page.Lines.Add(new LayoutLine
                     {
-                        Text = right[k].Text, Row = r, Col = right[k].Col,
-                        Revised = right[k].Rev
+                        Text = StyledText.LineText(right[k].Runs), Runs = right[k].Runs,
+                        Row = r, Col = right[k].Col, Revised = right[k].Rev
                     });
             }
         }

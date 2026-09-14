@@ -30,8 +30,23 @@ pannello laterale.
 **Schede scena.** `F6` apre la bacheca: una scheda per scena, con sinossi e colore. Si
 trascinano per riordinare il copione, doppio clic per saltare alla scena.
 
-**Come ti pare.** Carattere (tra quelli a larghezza fissa), tema chiaro, scuro o seppia,
-modalità macchina da scrivere che tiene la riga corrente a metà schermo (`F11`).
+**Il menù degli elementi.** Vai a capo e compare l'elenco con l'elemento che verrebbe da solo
+già selezionato: frecce e `Invio` per cambiarlo, oppure continui a scrivere e sparisce senza
+darti fastidio. Si spegne dalle preferenze se preferisci il flusso liscio.
+
+**Grassetto, corsivo, sottolineato.** `Ctrl+B`, `Ctrl+I`, `Ctrl+U` come in qualunque editor.
+Vengono salvati come marcatori Fountain (`**così**`, `*così*`, `_così_`), quindi sopravvivono a
+tutti i formati, e nel PDF escono davvero in Courier grassetto, obliquo e sottolineato.
+
+**Ogni elemento ha il suo colore.** Scene, personaggi, parentetiche e transizioni si
+distinguono a colpo d'occhio mentre scorri. I colori sono solo a schermo: il PDF resta nero.
+
+**Come ti pare.** Tema carta (avorio, riposante) oltre a chiaro, seppia e scuro; carattere a
+scelta tra quelli a larghezza fissa; macchina da scrivere che tiene la riga corrente a metà
+schermo (`F11`).
+
+**Le pagine si vedono.** Nel margine del foglio compaiono il numero di pagina e la riga di
+stacco dove il PDF andrà a capo: sai sempre a che pagina sei mentre scrivi.
 
 ## Produrre
 
@@ -63,7 +78,7 @@ file, datata; restano le ultime dieci. Più il salvataggio automatico ogni due m
 | Formato | Apri | Salva | Note |
 |---|:--:|:--:|---|
 | `.dlite` | ✔ | ✔ | Nativo. JSON leggibile, ottimo con git. L'unico che conserva tutto |
-| `.fountain` `.spmd` | ✔ | ✔ | Standard aperto: note, sinossi, numeri di scena e dual dialogue compresi |
+| `.fountain` `.spmd` | ✔ | ✔ | Standard aperto: note, sinossi, numeri di scena, dual dialogue e stili del testo |
 | `.fdx` `.fdxt` | ✔ | ✔ | Final Draft, anche i modelli. Con ScriptNote, SceneProperties e DualDialogue |
 | `.docx` `.rtf` `.txt` | ✔ | — | Import: gli elementi si riconoscono dai rientri, o dalle maiuscole se non ce ne sono |
 | `.pdf` | — | ✔ | Courier 12, formato standard di consegna |
@@ -78,14 +93,14 @@ rientri altrui — che qui sono l'unica cosa che distingue un dialogo da un'azio
 ## Scorciatoie
 
 ```
-Invio            elemento successivo             Ctrl+1   Scena
+Invio            elemento successivo + menù      Ctrl+1   Scena
 Shift+Invio      stesso elemento, riga nuova     Ctrl+2   Azione
 Tab              cambia tipo elemento            Ctrl+3   Personaggio
 Shift+Tab        tipo precedente                 Ctrl+4   Parentetica
 Tab su un nome   apre la parentetica             Ctrl+5   Dialogo
 Invio su vuoto   torna ad Azione                 Ctrl+6   Transizione
-                                                 Ctrl+D   dialogo simultaneo
 
+Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato   Ctrl+D dialogo simultaneo
 Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF   Ctrl+F trova
 F6 schede scena   F7 frontespizio   F8 statistiche   F9 pannello laterale
 F11 macchina da scrivere   Ctrl+M nota   Ctrl+ +/- zoom   F1 aiuto
@@ -136,8 +151,8 @@ Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Li
 L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.2.0 installer\DraftLite.iss
-# esce in installer\Output\DraftLite-Setup-1.2.0.exe
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.3.0 installer\DraftLite.iss
+# esce in installer\Output\DraftLite-Setup-1.3.0.exe
 ```
 
 La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
@@ -145,7 +160,15 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-git tag v1.2.0 && git push origin v1.2.0
+git tag v1.3.0 && git push origin v1.3.0
+```
+
+I file della release hanno sempre lo stesso nome, quindi questi due link valgono per sempre e
+puntano da soli all'ultima versione:
+
+```
+https://github.com/Giuseppe-TD/DraftLite/releases/latest/download/DraftLite-Setup.exe
+https://github.com/Giuseppe-TD/DraftLite/releases/latest/download/DraftLite-Portabile.exe
 ```
 
 ## Come è fatto
@@ -156,12 +179,13 @@ i font Courier standard del formato, né per il `.docx`, che è uno zip di XML.
 ```
 src/DraftLite/
   Model/      ElementType, ElementStyle (metriche tipografiche), ScreenElement + ElementMeta,
-              Screenplay (numerazione, sides), Revision, TitlePage
+              StyledText (grassetto/corsivo inline), Screenplay (numerazione, sides),
+              Revision, TitlePage
   Editor/     ScreenplayEditor (RichTextBox + PARAFORMAT2), NativeMethods
   IO/         DraftLiteFile, FountainIO, FdxIO, TextImporter (docx/rtf/txt),
               Paginator, ScreenplayStats, PdfBuilder, PdfExporter
   UI/         MainForm, CardsForm, ReportForm, AppearanceForm, SmallDialogs,
-              TitlePageForm, FindForm, UpdateChecker, Theme, AppSettings
+              TitlePageForm, FindForm, UpdateChecker, Theme, Icons, AppSettings
 installer/    DraftLite.iss (script Inno Setup), copione.ico (icona dei file)
 ```
 

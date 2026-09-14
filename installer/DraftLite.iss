@@ -2,14 +2,14 @@
 ;  DraftLite - script di installazione (Inno Setup 6)
 ;
 ;  Compilazione:
-;    ISCC.exe /DMyAppVersion=1.2.0 installer\DraftLite.iss
+;    ISCC.exe /DMyAppVersion=1.3.0 installer\DraftLite.iss
 ;
 ;  Si aspetta di trovare l'eseguibile gia' pubblicato in publish\DraftLite.exe
 ;  (dotnet publish -r win-x64 --self-contained -p:PublishSingleFile=true).
 ; ---------------------------------------------------------------------------
 
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.0"
+  #define MyAppVersion "1.3.0"
 #endif
 
 #define MyAppName "DraftLite"

@@ -31,7 +31,7 @@ public sealed class MainForm : Form
     private readonly TabControl _sideTabs = new TabControl { Dock = DockStyle.Fill };
     private readonly SplitContainer _split = new SplitContainer { Dock = DockStyle.Fill };
     private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, Tag = "desk" };
-    private readonly Panel _page = new Panel { Padding = new Padding(26, 18, 14, 10), Tag = "page" };
+    private readonly Panel _page = new Panel { Padding = new Padding(34, 18, 14, 10), Tag = "page" };
     private readonly StatusStrip _status = new StatusStrip();
     private readonly ToolStripStatusLabel _lblType = new ToolStripStatusLabel { AutoSize = false, Width = 150, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripStatusLabel _lblScene = new ToolStripStatusLabel { AutoSize = false, Width = 300, TextAlign = ContentAlignment.MiddleLeft };
@@ -54,6 +54,20 @@ public sealed class MainForm : Form
     private bool _statsDirty = true;
     private FindForm _findForm;
     private ToolStripMenuItem _typewriterItem;
+    private ToolStripMenuItem _askElementItem;
+    private List<(int CharIndex, int Page)> _pageBreaks = new List<(int, int)>();
+    private Font _gutterFont = new Font("Segoe UI", 7f, FontStyle.Bold);
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _gutterFont?.Dispose();
+            _statsTimer?.Dispose();
+            _autoSaveTimer?.Dispose();
+        }
+        base.Dispose(disposing);
+    }
 
     public MainForm(string openPath)
     {
@@ -169,6 +183,13 @@ public sealed class MainForm : Form
             n++;
         }
         format.DropDownItems.Add(new ToolStripSeparator());
+        format.DropDownItems.Add(Mi("Grassetto", Keys.Control | Keys.B,
+            (s, e) => { _editor.ToggleStyle(FontStyle.Bold); _editor.Focus(); }));
+        format.DropDownItems.Add(Mi("Corsivo", Keys.Control | Keys.I,
+            (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); }));
+        format.DropDownItems.Add(Mi("Sottolineato", Keys.Control | Keys.U,
+            (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); }));
+        format.DropDownItems.Add(new ToolStripSeparator());
         format.DropDownItems.Add(Mi("Dialogo simultaneo", Keys.Control | Keys.D,
             (s, e) => { _editor.ToggleDual(); _editor.Focus(); }));
 
@@ -204,6 +225,26 @@ public sealed class MainForm : Form
             _editor.TypewriterMode = _typewriterItem.Checked;
         };
         view.DropDownItems.Add(_typewriterItem);
+
+        _askElementItem = Mi("Chiedi l'elemento andando a capo", Keys.None, null);
+        _askElementItem.CheckOnClick = true;
+        _askElementItem.Checked = _settings.AskElementOnEnter;
+        _askElementItem.CheckedChanged += (s, e) =>
+        {
+            _settings.AskElementOnEnter = _askElementItem.Checked;
+            _editor.AskElementOnEnter = _askElementItem.Checked;
+        };
+        view.DropDownItems.Add(_askElementItem);
+
+        var breaksItem = Mi("Mostra le interruzioni di pagina", Keys.None, null);
+        breaksItem.CheckOnClick = true;
+        breaksItem.Checked = _settings.ShowPageBreaks;
+        breaksItem.CheckedChanged += (s, e) =>
+        {
+            _settings.ShowPageBreaks = breaksItem.Checked;
+            _page.Invalidate();
+        };
+        view.DropDownItems.Add(breaksItem);
         view.DropDownItems.Add(Mi("Aspetto (carattere e tema)...", Keys.None, (s, e) => ShowAppearance()));
         view.DropDownItems.Add(new ToolStripSeparator());
         view.DropDownItems.Add(Mi("Ingrandisci", Keys.Control | Keys.Oemplus, (s, e) => Zoom(0.1f)));
@@ -246,9 +287,43 @@ public sealed class MainForm : Form
         return menu;
     }
 
+    private ToolStrip _toolbar;
+
+    /// <summary>
+    /// Ridisegna le icone con l'inchiostro del tema: sul tema scuro quelle chiare
+    /// sparirebbero nello sfondo.
+    /// </summary>
+    private void RefreshToolbarIcons()
+    {
+        if (_toolbar == null) return;
+        var ink = _theme.PanelText;
+
+        foreach (ToolStripItem item in _toolbar.Items)
+        {
+            if (!(item is ToolStripButton b) || !(b.Tag is string key)) continue;
+
+            var old = b.Image;
+            b.Image = key switch
+            {
+                "bold" => Icons.Letter("B", ink, FontStyle.Bold),
+                "italic" => Icons.Letter("I", ink, FontStyle.Italic),
+                "underline" => Icons.Letter("U", ink, FontStyle.Underline),
+                "dual" => Icons.Dual(ink),
+                "cards" => Icons.Cards(ink),
+                "note" => Icons.Note(ink),
+                "title" => Icons.TitlePage(ink),
+                "stats" => Icons.Stats(ink),
+                "pdf" => Icons.Pdf(ink),
+                _ => b.Image
+            };
+            if (!ReferenceEquals(old, b.Image)) old?.Dispose();
+        }
+    }
+
     private ToolStrip BuildToolbar()
     {
         var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, RenderMode = ToolStripRenderMode.System };
+        _toolbar = tool;
 
         foreach (var st in ElementStyle.All) _cboType.Items.Add(st.Name);
         _cboType.SelectedIndexChanged += (s, e) =>
@@ -262,20 +337,50 @@ public sealed class MainForm : Form
         tool.Items.Add(_cboType);
         tool.Items.Add(new ToolStripSeparator());
 
-        void Btn(string text, string tip, EventHandler h)
+        void Btn(string text, string tip, string key, EventHandler h)
         {
-            var b = new ToolStripButton(text) { ToolTipText = tip, DisplayStyle = ToolStripItemDisplayStyle.Text };
+            var b = new ToolStripButton(text)
+            {
+                ToolTipText = tip,
+                Tag = key,
+                DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
+                ImageScaling = ToolStripItemImageScaling.None
+            };
             b.Click += h;
             tool.Items.Add(b);
         }
 
-        Btn("Schede", "Bacheca delle scene (F6)", (s, e) => ShowCards());
-        Btn("Nota", "Nota sull'elemento corrente (Ctrl+M)", (s, e) => EditNote());
-        Btn("Frontespizio", "Titolo, autore, contatti (F7)", (s, e) => EditTitlePage());
-        Btn("Statistiche", "Pagine, scene, battute (F8)", (s, e) => ShowReport());
-        tool.Items.Add(new ToolStripSeparator());
-        Btn("Esporta PDF", "Esporta in PDF standard (Ctrl+P)", (s, e) => ExportPdf());
+        void IconBtn(string tip, string key, EventHandler h)
+        {
+            var b = new ToolStripButton
+            {
+                ToolTipText = tip,
+                Tag = key,
+                DisplayStyle = ToolStripItemDisplayStyle.Image,
+                ImageScaling = ToolStripItemImageScaling.None
+            };
+            b.Click += h;
+            tool.Items.Add(b);
+        }
 
+        IconBtn("Grassetto (Ctrl+B)", "bold",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Bold); _editor.Focus(); });
+        IconBtn("Corsivo (Ctrl+I)", "italic",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); });
+        IconBtn("Sottolineato (Ctrl+U)", "underline",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); });
+        IconBtn("Dialogo simultaneo (Ctrl+D)", "dual",
+            (s, e) => { _editor.ToggleDual(); _editor.Focus(); });
+        tool.Items.Add(new ToolStripSeparator());
+
+        Btn("Schede", "Bacheca delle scene (F6)", "cards", (s, e) => ShowCards());
+        Btn("Nota", "Nota sull'elemento corrente (Ctrl+M)", "note", (s, e) => EditNote());
+        Btn("Frontespizio", "Titolo, autore, contatti (F7)", "title", (s, e) => EditTitlePage());
+        Btn("Statistiche", "Pagine, scene, battute (F8)", "stats", (s, e) => ShowReport());
+        tool.Items.Add(new ToolStripSeparator());
+        Btn("PDF", "Esporta in PDF standard (Ctrl+P)", "pdf", (s, e) => ExportPdf());
+
+        RefreshToolbarIcons();
         return tool;
     }
 
@@ -287,6 +392,11 @@ public sealed class MainForm : Form
 
         _pageHost.Resize += (s, e) => LayoutPage();
         _pageHost.MouseDown += (s, e) => _editor.Focus();
+        _pageHost.Paint += PageHost_Paint;
+        _page.Paint += Page_Paint;
+        _editor.VScroll += (s, e) => _page.Invalidate();
+        _editor.Resize += (s, e) => _page.Invalidate();
+        _editor.CaretMoved += (s, e) => { if (_settings.ShowPageBreaks) _page.Invalidate(); };
 
         _sceneList.SelectedIndexChanged += (s, e) =>
         {
@@ -362,6 +472,44 @@ public sealed class MainForm : Form
         };
     }
 
+    /// <summary>Ombra morbida attorno al foglio: si capisce dove finisce la pagina.</summary>
+    private void PageHost_Paint(object sender, PaintEventArgs e)
+    {
+        var r = _page.Bounds;
+        if (r.Width <= 0) return;
+
+        for (int i = 6; i >= 1; i--)
+        {
+            using var pen = new Pen(Color.FromArgb(Math.Max(4, 26 - i * 3), 0, 0, 0), 1f);
+            e.Graphics.DrawRectangle(pen, r.X - i, r.Y - i, r.Width + i * 2 - 1, r.Height + i * 2 - 1);
+        }
+    }
+
+    /// <summary>Numero di pagina e linea di stacco nel margine sinistro del foglio.</summary>
+    private void Page_Paint(object sender, PaintEventArgs e)
+    {
+        if (!_settings.ShowPageBreaks || _pageBreaks.Count == 0) return;
+
+        int top = _editor.Top;
+        int height = _editor.Height;
+
+        using var dash = new Pen(_theme.Rule, 1f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+        using var brush = new SolidBrush(_theme.Rule);
+
+        foreach (var (charIndex, page) in _pageBreaks)
+        {
+            if (page <= 1 || charIndex < 0 || charIndex > _editor.TextLength) continue;
+
+            var pt = _editor.GetPositionFromCharIndex(charIndex);
+            int y = top + pt.Y;
+            if (y < top - 2 || y > top + height) continue;
+
+            int marginRight = Math.Max(10, _page.Padding.Left - 3);
+            e.Graphics.DrawLine(dash, 4, y - 5, marginRight, y - 5);
+            e.Graphics.DrawString(page.ToString(), _gutterFont, brush, 5, y - 11);
+        }
+    }
+
     private void LayoutPage()
     {
         int w = Math.Min(_editor.PageWidthPixels + _page.Padding.Horizontal, _pageHost.ClientSize.Width);
@@ -391,9 +539,15 @@ public sealed class MainForm : Form
         _noteList.ForeColor = _theme.PanelText;
 
         _editor.SetColors(_theme.Paper, _theme.Ink, _theme.NoteBack);
-        _editor.SetEditorFont(_settings.FontFamily);
+        _editor.SetElementColors(_theme.ElementColors);
+        if (!string.Equals(_editor.Font.Name, _settings.FontFamily, StringComparison.OrdinalIgnoreCase))
+            _editor.SetEditorFont(_settings.FontFamily);
+        RefreshToolbarIcons();
         _editor.TypewriterMode = _settings.Typewriter;
+        _editor.AskElementOnEnter = _settings.AskElementOnEnter;
         LayoutPage();
+        _pageHost.Invalidate();
+        _page.Invalidate();
     }
 
     // ------------------------------------------------------------------ DOCUMENTO
@@ -910,9 +1064,40 @@ public sealed class MainForm : Form
         if (!_statsDirty) return;
         try
         {
-            var pages = Paginator.CountPages(CurrentScreenplay(), _settings.ToPageSetup());
-            _lblPages.Text = pages + (pages == 1 ? " pagina" : " pagine") +
-                             "   ~" + pages + " min      " + _settings.Paper;
+            var els = _editor.GetElements();
+
+            // posizione di ogni paragrafo nel testo, per sapere dove cadono le pagine
+            var offsets = new List<int>(els.Count);
+            int pos = 0;
+            foreach (var el in els)
+            {
+                offsets.Add(pos);
+                pos += (el.Text != null ? DraftLite.Model.StyledText.Plain(el.Text).Length : 0) + 1;
+            }
+
+            // Paginate lavora sugli elementi non vuoti: serve la corrispondenza con i paragrafi
+            var compactedToParagraph = new List<int>();
+            for (int k = 0; k < els.Count; k++)
+                if (!els[k].IsEmpty) compactedToParagraph.Add(k);
+
+            var sp = new Screenplay { TitlePage = _titlePage, Revision = _revision, Elements = els };
+            var pages = Paginator.Paginate(sp, _settings.ToPageSetup());
+
+            var breaks = new List<(int, int)>();
+            for (int p = 0; p < pages.Count; p++)
+            {
+                var first = pages[p].Lines.FirstOrDefault(l => l.ElementIndex >= 0);
+                if (first == null) continue;
+                if (first.ElementIndex >= compactedToParagraph.Count) continue;
+                int paragraph = compactedToParagraph[first.ElementIndex];
+                if (paragraph < offsets.Count) breaks.Add((offsets[paragraph], p + 1));
+            }
+            _pageBreaks = breaks;
+            _page.Invalidate();
+
+            int count = pages.Count;
+            _lblPages.Text = count + (count == 1 ? " pagina" : " pagine") +
+                             "   ~" + count + " min      " + _settings.Paper;
             _statsDirty = false;
         }
         catch { _lblPages.Text = string.Empty; }
@@ -986,13 +1171,20 @@ public sealed class MainForm : Form
 
     private void ShowAppearance()
     {
-        using var dlg = new AppearanceForm(_settings.FontFamily, _settings.ThemeName, _settings.Typewriter);
+        using var dlg = new AppearanceForm(_settings.FontFamily, _settings.ThemeName,
+                                           _settings.Typewriter, _settings.AskElementOnEnter,
+                                           _settings.ShowPageBreaks);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         _settings.FontFamily = dlg.SelectedFont;
         _settings.ThemeName = dlg.SelectedTheme;
         _settings.Typewriter = dlg.Typewriter;
+        _settings.AskElementOnEnter = dlg.AskElement;
+        _settings.ShowPageBreaks = dlg.PageBreaks;
+
         if (_typewriterItem != null) _typewriterItem.Checked = dlg.Typewriter;
+        if (_askElementItem != null) _askElementItem.Checked = dlg.AskElement;
+
         ApplyAppearance();
         _settings.Save();
     }
@@ -1109,7 +1301,11 @@ public sealed class MainForm : Form
             "TIPI DI ELEMENTO\r\n" +
             "  Ctrl+1 Scena      Ctrl+2 Azione       Ctrl+3 Personaggio\r\n" +
             "  Ctrl+4 Parentetica  Ctrl+5 Dialogo    Ctrl+6 Transizione\r\n" +
-            "  Ctrl+D  dialogo simultaneo (due colonne nel PDF)\r\n\r\n" +
+            "  Ctrl+D  dialogo simultaneo (due colonne nel PDF)\r\n" +
+            "  Andando a capo compare il menu degli elementi: frecce o numeri 1-6,\r\n" +
+            "  Invio conferma, oppure si continua a scrivere e sparisce.\r\n\r\n" +
+            "TESTO\r\n" +
+            "  Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato\r\n\r\n" +
             "FILE\r\n" +
             "  Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF\r\n\r\n" +
             "ALTRO\r\n" +

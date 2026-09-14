@@ -20,6 +20,7 @@ public sealed class ScreenplayEditor : RichTextBox
     private Font _fontNormal;
     private Font _fontBold;
     private readonly ListBox _suggest;
+    private readonly ListBox _chooser;
     private readonly List<string> _suggestValues = new List<string>();
     private readonly System.Windows.Forms.Timer _indexTimer;
 
@@ -42,6 +43,20 @@ public sealed class ScreenplayEditor : RichTextBox
     private bool _typewriter;
     private bool _hadNotes;
     private Color _noteBack = Color.FromArgb(255, 246, 200);
+
+    /// <summary>Colore del testo per ogni tipo di elemento (li decide il tema).</summary>
+    private readonly Dictionary<ElementType, Color> _elementColors = new Dictionary<ElementType, Color>
+    {
+        [ElementType.SceneHeading] = Color.Black,
+        [ElementType.Action] = Color.Black,
+        [ElementType.Character] = Color.Black,
+        [ElementType.Parenthetical] = Color.Black,
+        [ElementType.Dialogue] = Color.Black,
+        [ElementType.Transition] = Color.Black
+    };
+
+    /// <summary>Chiede quale elemento inserire quando si va a capo.</summary>
+    public bool AskElementOnEnter { get; set; } = true;
 
     /// <summary>
     /// Copia del testo valida fino alla prossima modifica: leggere Text chiama Windows
@@ -104,6 +119,17 @@ public sealed class ScreenplayEditor : RichTextBox
         };
         _suggest.Click += (s, e) => { AcceptSuggestion(); Focus(); };
 
+        _chooser = new ListBox
+        {
+            Visible = false,
+            IntegralHeight = false,
+            Font = new Font("Segoe UI", 9f),
+            BorderStyle = BorderStyle.FixedSingle,
+            Width = 210,
+            Height = 130
+        };
+        _chooser.Click += (s, e) => { AcceptChooser(); Focus(); };
+
         _indexTimer = new System.Windows.Forms.Timer { Interval = 900 };
         _indexTimer.Tick += (s, e) => { _indexTimer.Stop(); RebuildIndex(); };
     }
@@ -132,10 +158,16 @@ public sealed class ScreenplayEditor : RichTextBox
     {
         var host = (Control)FindForm() ?? Parent;
         if (host == null || _suggest.Parent == host) return;
+
         _suggest.Parent?.Controls.Remove(_suggest);
         host.Controls.Add(_suggest);
         _suggest.Visible = false;
         _suggest.BringToFront();
+
+        _chooser.Parent?.Controls.Remove(_chooser);
+        host.Controls.Add(_chooser);
+        _chooser.Visible = false;
+        _chooser.BringToFront();
     }
 
     /// <summary>Larghezza di riga = 6 pollici, come sulla pagina stampata (60 caratteri).</summary>
@@ -313,6 +345,7 @@ public sealed class ScreenplayEditor : RichTextBox
         var st = ElementStyle.Get(type);
         Select(Math.Min(caret, TextLength), 0);
         SelectionFont = st.Bold ? _fontBold : _fontNormal;
+        if (_elementColors.TryGetValue(type, out var caretColor)) SelectionColor = caretColor;
     }
 
     private void ApplyTypeToParagraph(int start, string text, ElementType type, bool convertCase)
@@ -336,6 +369,7 @@ public sealed class ScreenplayEditor : RichTextBox
         Select(start, text.Length);
         SetParaFormat(st);
         SelectionFont = st.Bold ? _fontBold : _fontNormal;
+        if (_elementColors.TryGetValue(type, out var color)) SelectionColor = color;
     }
 
     private static int ParagraphStartAt(string t, int index)
@@ -382,6 +416,7 @@ public sealed class ScreenplayEditor : RichTextBox
         SyncMeta();
 
         int selStart = SelectionStart, selLen = SelectionLength;
+        var pending = selLen == 0 ? SelectionFont : null;
         var scroll = GetScrollPos();
         bool saved = _internal;
         _internal = true;
@@ -395,15 +430,15 @@ public sealed class ScreenplayEditor : RichTextBox
                 Select(pos, 0);
                 var type = TypeFromParaFormat(GetParaFormat());
 
-                var el = new ScreenElement(type, line);
-
                 // il dialogo simultaneo vive nel testo come "^" finale, alla maniera di Fountain:
                 // cosi' sopravvive a copia, incolla e annulla senza bisogno di agganci
-                if (type == ElementType.Character && line.TrimEnd().EndsWith("^"))
+                bool dual = type == ElementType.Character && line.TrimEnd().EndsWith("^");
+                var readable = dual ? line.TrimEnd().TrimEnd('^').TrimEnd() : line;
+
+                var el = new ScreenElement(type, ReadStyledText(pos, readable, ElementStyle.Get(type).Bold))
                 {
-                    el.Dual = true;
-                    el.Text = line.TrimEnd().TrimEnd('^').TrimEnd();
-                }
+                    Dual = dual
+                };
 
                 if (i < _meta.Count) el.ApplyMeta(_meta[i]);
                 result.Add(el);
@@ -414,11 +449,99 @@ public sealed class ScreenplayEditor : RichTextBox
         {
             Select(selStart, selLen);
             SetScrollPos(scroll);
-            RestoreCaretFormat(selLen);
+            RestoreCaretFormat(selLen, pending);
+            pending?.Dispose();
             ResumeDrawing();
             _internal = saved;
         }
         return result;
+    }
+
+    /// <summary>
+    /// Rilegge un paragrafo tenendosi il grassetto, il corsivo e il sottolineato
+    /// messi a mano, e li riscrive come marcatori nel testo. Quasi sempre il
+    /// paragrafo ha un solo stile: in quel caso basta una lettura sola.
+    /// </summary>
+    private string ReadStyledText(int start, string plain, bool baseBold)
+    {
+        if (string.IsNullOrEmpty(plain)) return plain;
+
+        var runs = new List<TextRun>();
+        ReadRange(start, 0, plain.Length, plain, baseBold, runs);
+        return StyledText.Write(runs);
+    }
+
+    /// <summary>
+    /// Trova i confini degli stili dimezzando l'intervallo: se un tratto ha un formato
+    /// solo, Windows lo dice con una lettura sola. Cosi' un paragrafo costa poche letture
+    /// invece di una per carattere.
+    /// </summary>
+    private void ReadRange(int origin, int from, int len, string plain, bool baseBold, List<TextRun> runs)
+    {
+        if (len <= 0) return;
+
+        Select(origin + from, len);
+        var font = SelectionFont;
+
+        if (font != null || len == 1)
+        {
+            bool b = font != null && font.Bold && !baseBold;
+            bool it = font != null && font.Italic;
+            bool u = font != null && font.Underline;
+            font?.Dispose();
+
+            var piece = plain.Substring(from, len);
+            var last = runs.Count > 0 ? runs[runs.Count - 1] : null;
+            if (last != null && last.Bold == b && last.Italic == it && last.Underline == u) last.Text += piece;
+            else runs.Add(new TextRun(piece, b, it, u));
+            return;
+        }
+
+        int half = len / 2;
+        ReadRange(origin, from, half, plain, baseBold, runs);
+        ReadRange(origin, from + half, len - half, plain, baseBold, runs);
+    }
+
+    /// <summary>
+    /// Grassetto, corsivo o sottolineato sul testo selezionato (o sul punto in cui si sta
+    /// per scrivere). Si tocca solo quel singolo attributo: colore, carattere e gli altri
+    /// stili restano dove sono, e basta un messaggio solo anche su selezioni enormi.
+    /// </summary>
+    public void ToggleStyle(FontStyle style)
+    {
+        if (!IsHandleCreated) return;
+
+        uint mask = style == FontStyle.Bold ? NativeMethods.CFM_BOLD
+                  : style == FontStyle.Italic ? NativeMethods.CFM_ITALIC
+                  : NativeMethods.CFM_UNDERLINE;
+
+        var cur = CHARFORMAT2.Create();
+        NativeMethods.SendMessage(Handle, NativeMethods.EM_GETCHARFORMAT,
+            (IntPtr)NativeMethods.SCF_SELECTION, ref cur);
+
+        // attivo per tutta la selezione? allora si spegne, altrimenti si accende
+        bool uniformlyOn = (cur.dwMask & mask) != 0 && (cur.dwEffects & mask) != 0;
+
+        var cf = CHARFORMAT2.Create();
+        cf.dwMask = mask;
+        cf.dwEffects = uniformlyOn ? 0u : mask;
+        NativeMethods.SendMessage(Handle, NativeMethods.EM_SETCHARFORMAT,
+            (IntPtr)NativeMethods.SCF_SELECTION, ref cf);
+
+        _textCacheValid = false;
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Cambia solo il carattere, lasciando intatti stili e colori.</summary>
+    private void ApplyFontFaceToAll(string family, float points)
+    {
+        if (!IsHandleCreated) return;
+        var cf = CHARFORMAT2.Create();
+        cf.dwMask = NativeMethods.CFM_FACE | NativeMethods.CFM_SIZE;
+        cf.yHeight = (int)Math.Round(points * 20);   // twip
+        cf.SetFace(family);
+        NativeMethods.SendMessage(Handle, NativeMethods.EM_SETCHARFORMAT,
+            (IntPtr)NativeMethods.SCF_ALL, ref cf);
     }
 
     public void SetElements(IList<ScreenElement> els) => SetElements(els, true);
@@ -438,7 +561,6 @@ public sealed class ScreenplayEditor : RichTextBox
             Rtf = BuildRtf(els);
             Select(0, 0);
             if (clearUndo) ClearUndo();
-            RestoreFontEverywhere();
 
             _meta = els.Select(x => x.Meta).ToList();
             _metaKeys = BuildKeys(els);
@@ -465,7 +587,7 @@ public sealed class ScreenplayEditor : RichTextBox
         foreach (var e in els)
         {
             var st = ElementStyle.Get(e.Type);
-            var text = e.Text ?? string.Empty;
+            var text = StyledText.Plain(e.Text ?? string.Empty);
             if (st.UpperCase) text = text.ToUpperInvariant();
             if (e.Type == ElementType.Character && e.Dual) text += " ^";
             keys.Add(text);
@@ -473,20 +595,21 @@ public sealed class ScreenplayEditor : RichTextBox
         return keys;
     }
 
-    /// <summary>Riporta il carattere scelto dall'utente su tutto il documento (l'RTF lo azzera).</summary>
-    private void RestoreFontEverywhere()
-    {
-        int selStart = SelectionStart, selLen = SelectionLength;
-        SelectAll();
-        SelectionFont = _fontNormal;
-        Select(Math.Min(selStart, TextLength), Math.Min(selLen, Math.Max(0, TextLength - selStart)));
-    }
-
     private string BuildRtf(IList<ScreenElement> els)
     {
         var family = (_fontNormal != null ? _fontNormal.Name : "Courier New").Replace("{", "").Replace("}", "").Replace("\\", "");
         var sb = new StringBuilder();
         sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fmodern\fprq1\fcharset0 ").Append(family).Append(";}}");
+
+        // tavolozza: un colore per ogni tipo di elemento, nell'ordine di ElementStyle.All
+        sb.Append(@"{\colortbl ;");
+        var order = ElementStyle.All.ToList();
+        foreach (var st0 in order)
+        {
+            var c = _elementColors.TryGetValue(st0.Type, out var col) ? col : ForeColor;
+            sb.Append(@"\red").Append(c.R).Append(@"\green").Append(c.G).Append(@"\blue").Append(c.B).Append(';');
+        }
+        sb.Append('}');
         sb.Append(@"\viewkind4\uc1");
 
         for (int i = 0; i < els.Count; i++)
@@ -494,8 +617,11 @@ public sealed class ScreenplayEditor : RichTextBox
             var e = els[i];
             var st = ElementStyle.Get(e.Type);
             var text = e.Text ?? string.Empty;
-            if (st.UpperCase) text = text.ToUpperInvariant();
+            bool plainOnly = st.UpperCase;
+            if (plainOnly) text = StyledText.Plain(text).ToUpperInvariant();
             if (e.Type == ElementType.Character && e.Dual) text += " ^";
+
+            int colorIndex = order.FindIndex(x => x.Type == e.Type) + 1;
 
             sb.Append(@"\pard\f0\fs24");
             sb.Append(@"\li").Append(st.LeftTwips);
@@ -503,9 +629,28 @@ public sealed class ScreenplayEditor : RichTextBox
             sb.Append(@"\sb").Append(st.SpaceBeforeTwips);
             sb.Append(@"\sa0");
             sb.Append(st.RightAlign ? @"\qr" : @"\ql");
-            sb.Append(st.Bold ? @"\b" : @"\b0");
-            sb.Append(' ');
-            AppendRtfText(sb, text);
+            sb.Append(@"\cf").Append(colorIndex);
+
+            if (plainOnly || !StyledText.HasMarkup(text))
+            {
+                sb.Append(st.Bold ? @"\b" : @"\b0");
+                sb.Append(' ');
+                AppendRtfText(sb, plainOnly ? text : StyledText.Plain(text));
+            }
+            else
+            {
+                foreach (var run in StyledText.Parse(text))
+                {
+                    if (run.Text.Length == 0) continue;
+                    sb.Append(run.Bold || st.Bold ? @"\b" : @"\b0");
+                    sb.Append(run.Italic ? @"\i" : @"\i0");
+                    sb.Append(run.Underline ? @"\ul" : @"\ulnone");
+                    sb.Append(' ');
+                    AppendRtfText(sb, run.Text);
+                }
+                sb.Append(@"\b0\i0\ulnone");
+            }
+
             if (i < els.Count - 1) sb.Append(@"\par");
         }
 
@@ -626,6 +771,30 @@ public sealed class ScreenplayEditor : RichTextBox
 
     protected override void OnKeyDown(KeyEventArgs e)
     {
+        if (_chooser.Visible)
+        {
+            switch (e.KeyCode)
+            {
+                case Keys.Down:
+                    _chooser.SelectedIndex = Math.Min(_chooser.SelectedIndex + 1, _chooser.Items.Count - 1);
+                    e.Handled = e.SuppressKeyPress = true;
+                    return;
+                case Keys.Up:
+                    _chooser.SelectedIndex = Math.Max(_chooser.SelectedIndex - 1, 0);
+                    e.Handled = e.SuppressKeyPress = true;
+                    return;
+                case Keys.Escape:
+                    HideChooser();
+                    e.Handled = e.SuppressKeyPress = true;
+                    return;
+                case Keys.Enter:
+                case Keys.Tab:
+                    AcceptChooser();
+                    e.Handled = e.SuppressKeyPress = true;
+                    return;
+            }
+        }
+
         if (_suggest.Visible)
         {
             switch (e.KeyCode)
@@ -650,11 +819,20 @@ public sealed class ScreenplayEditor : RichTextBox
             }
         }
 
-        // blocca le scorciatoie di formattazione del RichTextBox: la formattazione
-        // qui la decide il tipo di elemento, non l'utente
+        // grassetto, corsivo e sottolineato restano all'utente...
+        if (e.Control && !e.Alt && !e.Shift &&
+            (e.KeyCode == Keys.B || e.KeyCode == Keys.I || e.KeyCode == Keys.U))
+        {
+            ToggleStyle(e.KeyCode == Keys.B ? FontStyle.Bold
+                      : e.KeyCode == Keys.I ? FontStyle.Italic
+                      : FontStyle.Underline);
+            e.Handled = e.SuppressKeyPress = true;
+            return;
+        }
+
+        // ...l'allineamento no: quello dice di che tipo e' l'elemento
         if (e.Control && !e.Alt &&
-            (e.KeyCode == Keys.B || e.KeyCode == Keys.I || e.KeyCode == Keys.U ||
-             e.KeyCode == Keys.E || e.KeyCode == Keys.L || e.KeyCode == Keys.R || e.KeyCode == Keys.J))
+            (e.KeyCode == Keys.E || e.KeyCode == Keys.L || e.KeyCode == Keys.R || e.KeyCode == Keys.J))
         {
             e.Handled = e.SuppressKeyPress = true;
             return;
@@ -707,6 +885,7 @@ public sealed class ScreenplayEditor : RichTextBox
     protected override void OnKeyPress(KeyPressEventArgs e)
     {
         _fromTyping = true;
+        if (_chooser.Visible && !char.IsControl(e.KeyChar)) HideChooser();
         if (!char.IsControl(e.KeyChar))
         {
             var st = ElementStyle.Get(CurrentType);
@@ -758,6 +937,9 @@ public sealed class ScreenplayEditor : RichTextBox
         HideSuggestions();
         RaiseTypeChanged(true);
         ScrollToCaret();
+
+        if (AskElementOnEnter) ShowElementChooser(next);
+
         _indexTimer.Stop();
         _indexTimer.Start();
     }
@@ -815,16 +997,29 @@ public sealed class ScreenplayEditor : RichTextBox
     {
         base.OnSelectionChanged(e);
         if (_internal) return;
+        HideChooser();
         RaiseTypeChanged(false);
         CenterCaret();
+        CaretMoved?.Invoke(this, EventArgs.Empty);
         if (_suggest.Visible) UpdateSuggestions();
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
         HideSuggestions();
+        HideChooser();
         base.OnMouseDown(e);
     }
+
+    protected override void OnLostFocus(EventArgs e)
+    {
+        HideSuggestions();
+        HideChooser();
+        base.OnLostFocus(e);
+    }
+
+    /// <summary>Il cursore si e' spostato: serve a chi disegna a margine.</summary>
+    public event EventHandler CaretMoved;
 
     private void RaiseTypeChanged(bool force)
     {
@@ -852,6 +1047,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
     private void UpdateSuggestions()
     {
+        if (_chooser.Visible) { HideSuggestions(); return; }
         var type = CurrentType;
         var text = CurrentParagraphText;
         var caretAtEnd = SelectionStart >= ParagraphEndAt(CachedText, SelectionStart);
@@ -950,6 +1146,105 @@ public sealed class ScreenplayEditor : RichTextBox
         if (_suggest.Visible) _suggest.Visible = false;
     }
 
+    // ------------------------------------------------------------------ SCELTA ELEMENTO
+
+    /// <summary>
+    /// Il menu che compare andando a capo: propone l'elemento che verrebbe da solo,
+    /// gli altri sono a un tasto di distanza. Si ignora semplicemente continuando a scrivere.
+    /// </summary>
+    public void ShowElementChooser(ElementType proposed)
+    {
+        var host = FindForm();
+        if (host == null || !IsHandleCreated) return;
+
+        HideSuggestions();
+
+        var types = ElementStyle.All.ToList();
+        _chooser.BeginUpdate();
+        _chooser.Items.Clear();
+        for (int i = 0; i < types.Count; i++)
+            _chooser.Items.Add("  " + types[i].Name + "   (Ctrl+" + (i + 1) + ")");
+        _chooser.EndUpdate();
+
+        int index = types.FindIndex(x => x.Type == proposed);
+        _chooser.SelectedIndex = index < 0 ? 0 : index;
+        _chooser.Height = types.Count * _chooser.ItemHeight + 6;
+
+        var caretPos = GetPositionFromCharIndex(SelectionStart);
+        var screen = PointToScreen(new Point(caretPos.X, caretPos.Y + (int)(Font.Height * ZoomFactor) + 2));
+        var local = host.PointToClient(screen);
+
+        if (local.Y + _chooser.Height > host.ClientSize.Height)
+            local.Y = Math.Max(0, local.Y - _chooser.Height - (int)(Font.Height * ZoomFactor) - 4);
+        if (local.X + _chooser.Width > host.ClientSize.Width)
+            local.X = Math.Max(0, host.ClientSize.Width - _chooser.Width);
+
+        _chooser.Location = local;
+        _chooser.Visible = true;
+        _chooser.BringToFront();
+    }
+
+    public void HideChooser()
+    {
+        if (_chooser.Visible) _chooser.Visible = false;
+    }
+
+    private void AcceptChooser()
+    {
+        if (!_chooser.Visible) return;
+        int i = _chooser.SelectedIndex;
+        HideChooser();
+
+        var types = ElementStyle.All.ToList();
+        if (i < 0 || i >= types.Count) return;
+        ApplyType(types[i].Type);
+    }
+
+    /// <summary>Colori del testo per tipo di elemento (li passa il tema).</summary>
+    public void SetElementColors(IDictionary<ElementType, Color> colors)
+    {
+        if (colors == null) return;
+        foreach (var kv in colors) _elementColors[kv.Key] = kv.Value;
+
+        _chooser.BackColor = BackColor;
+        _chooser.ForeColor = ForeColor;
+        _suggest.BackColor = BackColor;
+        _suggest.ForeColor = ForeColor;
+
+        if (!IsHandleCreated || TextLength == 0) return;
+
+        // ricolora il documento gia' aperto
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        int selStart = SelectionStart, selLen = SelectionLength;
+        var pending = selLen == 0 ? SelectionFont : null;
+        try
+        {
+            var lines = CachedText.Split('\n');
+            int pos = 0;
+            foreach (var line in lines)
+            {
+                if (line.Length > 0)
+                {
+                    Select(pos, 0);
+                    var type = TypeFromParaFormat(GetParaFormat());
+                    Select(pos, line.Length);
+                    if (_elementColors.TryGetValue(type, out var c)) SelectionColor = c;
+                }
+                pos += line.Length + 1;
+            }
+        }
+        finally
+        {
+            Select(selStart, selLen);
+            RestoreCaretFormat(selLen, pending);
+            pending?.Dispose();
+            ResumeDrawing();
+            _internal = saved;
+        }
+    }
+
     // ------------------------------------------------------------------ INDICE
 
     /// <summary>
@@ -963,6 +1258,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
         var lines = CachedText.Split('\n');
         int selStart = SelectionStart, selLen = SelectionLength;
+        var pending = selLen == 0 ? SelectionFont : null;
         var scroll = GetScrollPos();
         bool saved = _internal;
         _internal = true;
@@ -985,7 +1281,8 @@ public sealed class ScreenplayEditor : RichTextBox
         {
             Select(selStart, selLen);
             SetScrollPos(scroll);
-            RestoreCaretFormat(selLen);
+            RestoreCaretFormat(selLen, pending);
+            pending?.Dispose();
             ResumeDrawing();
             _internal = saved;
         }
@@ -1035,11 +1332,25 @@ public sealed class ScreenplayEditor : RichTextBox
     /// Dopo una scansione la selezione torna al suo posto, ma il formato "in attesa"
     /// del cursore no: senza questo, una scena appena iniziata perde il grassetto.
     /// </summary>
-    private void RestoreCaretFormat(int selLen)
+    /// <summary>
+    /// Dopo una scansione la selezione torna al suo posto, ma il formato "in attesa"
+    /// del cursore no. Si rimette quello che c'era, cosi' un Ctrl+I dato e non ancora
+    /// usato non se lo mangia il primo timer che passa.
+    /// </summary>
+    private void RestoreCaretFormat(int selLen, Font pending = null)
     {
         if (selLen != 0 || !IsHandleCreated) return;
-        var st = ElementStyle.Get(TypeFromParaFormat(GetParaFormat()));
+
+        if (pending != null)
+        {
+            SelectionFont = pending;
+            return;
+        }
+
+        var type = TypeFromParaFormat(GetParaFormat());
+        var st = ElementStyle.Get(type);
         SelectionFont = st.Bold ? _fontBold : _fontNormal;
+        if (_elementColors.TryGetValue(type, out var color)) SelectionColor = color;
     }
 
     public IReadOnlyList<string> KnownCharacters => _characters;
@@ -1204,6 +1515,7 @@ public sealed class ScreenplayEditor : RichTextBox
         if (end <= start) return;
 
         int selStart = SelectionStart, selLen = SelectionLength;
+        var pending = selLen == 0 ? SelectionFont : null;
         bool saved = _internal;
         _internal = true;
         SuspendDrawing();
@@ -1215,7 +1527,8 @@ public sealed class ScreenplayEditor : RichTextBox
         finally
         {
             Select(selStart, selLen);
-            RestoreCaretFormat(selLen);
+            RestoreCaretFormat(selLen, pending);
+            pending?.Dispose();
             ResumeDrawing();
             _internal = saved;
         }
@@ -1234,6 +1547,7 @@ public sealed class ScreenplayEditor : RichTextBox
         var t = CachedText;
         var lines = t.Split('\n');
         int selStart = SelectionStart, selLen = SelectionLength;
+        var pending = selLen == 0 ? SelectionFont : null;
         bool saved = _internal;
         _internal = true;
         SuspendDrawing();
@@ -1256,7 +1570,8 @@ public sealed class ScreenplayEditor : RichTextBox
         finally
         {
             Select(selStart, selLen);
-            RestoreCaretFormat(selLen);
+            RestoreCaretFormat(selLen, pending);
+            pending?.Dispose();
             ResumeDrawing();
             _internal = saved;
         }
@@ -1380,8 +1695,7 @@ public sealed class ScreenplayEditor : RichTextBox
         try
         {
             Font = _fontNormal;
-            SelectAll();
-            SelectionFont = _fontNormal;
+            ApplyFontFaceToAll(_fontNormal.Name, 12f);   // solo la famiglia: gli stili restano
             Select(selStart, selLen);
         }
         finally
@@ -1394,7 +1708,6 @@ public sealed class ScreenplayEditor : RichTextBox
         oldBold?.Dispose();
 
         ApplyPageWidth();
-        ReapplySceneBold();
         RefreshNoteHighlights();
     }
 
@@ -1488,6 +1801,7 @@ public sealed class ScreenplayEditor : RichTextBox
             _fontNormal?.Dispose();
             _fontBold?.Dispose();
             _suggest?.Dispose();
+            _chooser?.Dispose();
         }
         base.Dispose(disposing);
     }

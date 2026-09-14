@@ -8,8 +8,17 @@
 ;  (dotnet publish -r win-x64 --self-contained -p:PublishSingleFile=true).
 ; ---------------------------------------------------------------------------
 
+; La versione arriva da chi compila (/DMyAppVersion=1.5.0, che e' quello che fa
+; il workflow partendo dal tag o dal csproj). Se non la passa nessuno - build a
+; mano - la si legge direttamente dall'eseguibile che stiamo impacchettando:
+; cosi' l'installer non puo' dichiarare una versione diversa dal programma.
 #ifndef MyAppVersion
-  #define MyAppVersion "1.5.0"
+  #define ExeToPack AddBackslash(SourcePath) + "..\publish\DraftLite.exe"
+  #if FileExists(ExeToPack)
+    #define MyAppVersion GetVersionNumbersString(ExeToPack)
+  #else
+    #define MyAppVersion "0.0.0"
+  #endif
 #endif
 
 #define MyAppName "DraftLite"

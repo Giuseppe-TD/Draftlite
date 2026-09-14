@@ -6,7 +6,13 @@ permissions:
 on:
   push:
     branches: [ main ]
-    tags: [ 'v*' ]
+    tags:
+      - 'v*'        # v1.2.3
+      - '[0-9]*'    # 1.2.3 (senza la v)
+  # quando la release si crea o si modifica dal sito di GitHub
+  release:
+    types: [ published, created, edited, released ]
+
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -24,13 +30,36 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Trova il progetto
+        id: paths
+        shell: pwsh
+        run: |
+          # il repository puo' avere i file alla radice oppure dentro una sottocartella:
+          # si cerca il .csproj e si ricava da li' la radice del progetto
+          $csproj = Get-ChildItem -Path . -Recurse -Filter DraftLite.csproj -File | Select-Object -First 1
+          if (-not $csproj) { throw "DraftLite.csproj non trovato nel repository" }
+
+          $root = (Resolve-Path (Join-Path $csproj.Directory.FullName '..\..')).Path
+          $repo = (Get-Location).Path
+          $rel  = $root.Substring($repo.Length).TrimStart('\')
+          if ([string]::IsNullOrEmpty($rel)) { $rel = '.' }
+
+          "root=$rel"                  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "csproj=$($csproj.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Progetto trovato in: $rel"
+          Write-Host "Csproj: $($csproj.FullName)"
+
       - name: Versione
         id: ver
         shell: pwsh
         run: |
-          $ref = "${{ github.ref }}"
-          if ($ref -like 'refs/tags/v*') {
-            $v = $ref -replace '^refs/tags/v',''
+          $ref  = "${{ github.ref }}"
+          $rtag = "${{ github.event.release.tag_name }}"
+
+          if (-not [string]::IsNullOrEmpty($rtag)) {
+            $v = $rtag -replace '^[vV]',''            # release creata dal sito
+          } elseif ($ref -like 'refs/tags/*') {
+            $v = ($ref -replace '^refs/tags/','') -replace '^[vV]',''
           } else {
             $v = "1.2.0-dev.${{ github.run_number }}"
           }
@@ -41,11 +70,11 @@ jobs:
           Write-Host "Versione: $v (assembly $num)"
 
       - name: Restore
-        run: dotnet restore src/DraftLite/DraftLite.csproj
+        run: dotnet restore "${{ steps.paths.outputs.csproj }}"
 
       - name: Publish (win-x64, self-contained)
         run: >
-          dotnet publish src/DraftLite/DraftLite.csproj
+          dotnet publish "${{ steps.paths.outputs.csproj }}"
           -c Release
           -r win-x64
           --self-contained true
@@ -56,7 +85,7 @@ jobs:
           -p:DebugType=none
           -p:Version=${{ steps.ver.outputs.numeric }}
           -p:InformationalVersion=${{ steps.ver.outputs.version }}
-          -o publish
+          -o "${{ steps.paths.outputs.root }}/publish"
 
       - name: Installer (Inno Setup)
         shell: pwsh
@@ -73,10 +102,13 @@ jobs:
           }
           if (-not (Test-Path $iscc)) { throw "ISCC.exe non trovato: impossibile creare l'installer" }
 
-          & $iscc /DMyAppVersion=${{ steps.ver.outputs.numeric }} installer\DraftLite.iss
+          $iss = Join-Path "${{ steps.paths.outputs.root }}" "installer\DraftLite.iss"
+          if (-not (Test-Path $iss)) { throw "Script installer non trovato: $iss" }
+
+          & $iscc /DMyAppVersion=${{ steps.ver.outputs.numeric }} $iss
           if ($LASTEXITCODE -ne 0) { throw "Compilazione dell'installer fallita ($LASTEXITCODE)" }
 
-          $setup = Get-ChildItem installer\Output\*.exe | Select-Object -First 1
+          $setup = Get-ChildItem (Join-Path "${{ steps.paths.outputs.root }}" "installer\Output\*.exe") | Select-Object -First 1
           if (-not $setup) { throw "Installer non prodotto" }
           Write-Host "Installer: $($setup.Name) - $([math]::Round($setup.Length/1MB,1)) MB"
 
@@ -87,8 +119,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
           # nomi senza numero di versione: cosi' il link di download resta sempre lo stesso
-          Copy-Item installer\Output\*.exe dist\DraftLite-Setup.exe
-          Copy-Item publish\DraftLite.exe  dist\DraftLite-Portabile.exe
+          $root = "${{ steps.paths.outputs.root }}"
+          Copy-Item (Join-Path $root "installer\Output\*.exe") dist\DraftLite-Setup.exe
+          Copy-Item (Join-Path $root "publish\DraftLite.exe")   dist\DraftLite-Portabile.exe
 
           $notes = @()
           $notes += "**DraftLite-Setup.exe** - installazione normale: collegamenti, associazione dei file .dlite, disinstallazione dal Pannello di controllo."
@@ -120,9 +153,10 @@ jobs:
           if-no-files-found: error
 
       - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
           name: DraftLite ${{ steps.ver.outputs.version }}
           draft: false
           prerelease: false

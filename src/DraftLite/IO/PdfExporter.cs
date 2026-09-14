@@ -66,7 +66,7 @@ public static class PdfExporter
                     : left + line.Col * CharW;
 
                 if (line.Runs != null && line.Runs.Count > 0)
-                    pdf.DrawRuns(x, y, line.Runs, line.Bold);
+                    pdf.DrawRuns(x, y, line.Runs, line.Bold, PdfBuilder.DefaultFontSize, setup.TextColors);
                 else
                     pdf.DrawText(x, y, line.Text, line.Bold);
 

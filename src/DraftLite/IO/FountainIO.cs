@@ -363,6 +363,9 @@ public static class FountainIO
 
             if (!first && !attached) sb.Append('\n');
 
+            // colori ed evidenziazioni non esistono in Fountain: restano solo nel .dlite
+            e.Text = StyledText.WithoutColors(e.Text);
+
             switch (e.Type)
             {
                 case ElementType.SceneHeading:

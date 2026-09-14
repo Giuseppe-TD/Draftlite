@@ -23,6 +23,9 @@ public sealed class PageSetup
     /// <summary>Stampa gli asterischi delle righe cambiate e il colore della bozza.</summary>
     public bool RevisionMarks { get; set; } = true;
 
+    /// <summary>Stampa anche i colori e le evidenziazioni scelti a mano (di norma il copione va in nero).</summary>
+    public bool TextColors { get; set; } = false;
+
     /// <summary>Scritta in diagonale su ogni pagina (es. "BOZZA - NON DISTRIBUIRE").</summary>
     public string Watermark { get; set; }
 

@@ -126,6 +126,79 @@ public sealed class MainForm : Form
         MainMenuStrip = menu;
     }
 
+    /// <summary>Colori pronti per il testo e per l'evidenziatore.</summary>
+    private static readonly (string Name, string Hex)[] TextPalette =
+    {
+        ("Automatico (colore dell'elemento)", null),
+        ("Nero", "#1A1A1A"),
+        ("Rosso", "#C0392B"),
+        ("Blu", "#2E5FA3"),
+        ("Verde", "#2E7D4F"),
+        ("Arancio", "#D98026"),
+        ("Viola", "#7A4FA3"),
+        ("Grigio", "#7A7A7A")
+    };
+
+    private static readonly (string Name, string Hex)[] HighlightPalette =
+    {
+        ("Nessuno", null),
+        ("Giallo", "#FFF176"),
+        ("Verde", "#C5E1A5"),
+        ("Azzurro", "#A7D8F0"),
+        ("Rosa", "#F8BBD0"),
+        ("Arancio", "#FFCC80"),
+        ("Grigio", "#DDDDDD")
+    };
+
+    private static Bitmap Swatch(string hex)
+    {
+        var bmp = new Bitmap(14, 14);
+        using var g = Graphics.FromImage(bmp);
+        var c = CardsForm.ParseColor(hex);
+        g.Clear(c ?? Color.White);
+        using var pen = new Pen(Color.FromArgb(120, 120, 120));
+        g.DrawRectangle(pen, 0, 0, 13, 13);
+        if (c == null)
+        {
+            using var red = new Pen(Color.FromArgb(180, 60, 60), 1.5f);
+            g.DrawLine(red, 2, 12, 12, 2);
+        }
+        return bmp;
+    }
+
+    /// <summary>Riempie un menu con la tavolozza, piu' la voce per sceglierne uno qualunque.</summary>
+    private void FillColorMenu(ToolStripDropDownItem parent, bool highlight)
+    {
+        parent.DropDownItems.Clear();
+        foreach (var (name, hex) in highlight ? HighlightPalette : TextPalette)
+        {
+            var item = new ToolStripMenuItem(name) { Image = Swatch(hex), ImageScaling = ToolStripItemImageScaling.None };
+            var captured = hex;
+            item.Click += (s, e) =>
+            {
+                var color = CardsForm.ParseColor(captured);
+                if (highlight) _editor.ApplyHighlight(color);
+                else _editor.ApplyTextColor(color);
+                _editor.Focus();
+                SetDirty(true);
+            };
+            parent.DropDownItems.Add(item);
+        }
+
+        parent.DropDownItems.Add(new ToolStripSeparator());
+        var custom = new ToolStripMenuItem("Altro colore...");
+        custom.Click += (s, e) =>
+        {
+            using var dlg = new ColorDialog { FullOpen = true, AnyColor = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            if (highlight) _editor.ApplyHighlight(dlg.Color);
+            else _editor.ApplyTextColor(dlg.Color);
+            _editor.Focus();
+            SetDirty(true);
+        };
+        parent.DropDownItems.Add(custom);
+    }
+
     private static ToolStripMenuItem Mi(string text, Keys shortcut, EventHandler handler)
     {
         var it = new ToolStripMenuItem(text);
@@ -189,6 +262,14 @@ public sealed class MainForm : Form
             (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); }));
         format.DropDownItems.Add(Mi("Sottolineato", Keys.Control | Keys.U,
             (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); }));
+        var textColor = new ToolStripMenuItem("Colore del testo");
+        FillColorMenu(textColor, false);
+        format.DropDownItems.Add(textColor);
+
+        var highlightMenu = new ToolStripMenuItem("Evidenziatore");
+        FillColorMenu(highlightMenu, true);
+        format.DropDownItems.Add(highlightMenu);
+
         format.DropDownItems.Add(new ToolStripSeparator());
         format.DropDownItems.Add(Mi("Dialogo simultaneo", Keys.Control | Keys.D,
             (s, e) => { _editor.ToggleDual(); _editor.Focus(); }));
@@ -371,6 +452,27 @@ public sealed class MainForm : Form
             (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); });
         IconBtn("Dialogo simultaneo (Ctrl+D)", "dual",
             (s, e) => { _editor.ToggleDual(); _editor.Focus(); });
+
+        var colorBtn = new ToolStripDropDownButton
+        {
+            ToolTipText = "Colore del testo",
+            Image = Swatch("#C0392B"),
+            DisplayStyle = ToolStripItemDisplayStyle.Image,
+            ImageScaling = ToolStripItemImageScaling.None
+        };
+        FillColorMenu(colorBtn, false);
+        tool.Items.Add(colorBtn);
+
+        var markBtn = new ToolStripDropDownButton
+        {
+            ToolTipText = "Evidenziatore",
+            Image = Swatch("#FFF176"),
+            DisplayStyle = ToolStripItemDisplayStyle.Image,
+            ImageScaling = ToolStripItemImageScaling.None
+        };
+        FillColorMenu(markBtn, true);
+        tool.Items.Add(markBtn);
+
         tool.Items.Add(new ToolStripSeparator());
 
         Btn("Schede", "Bacheca delle scene (F6)", "cards", (s, e) => ShowCards());
@@ -539,7 +641,15 @@ public sealed class MainForm : Form
         _noteList.ForeColor = _theme.PanelText;
 
         _editor.SetColors(_theme.Paper, _theme.Ink, _theme.NoteBack);
-        _editor.SetElementColors(_theme.ElementColors);
+
+        var colors = _theme.ElementColors;
+        foreach (var kv in _settings.ElementColors)
+        {
+            if (!Enum.TryParse<ElementType>(kv.Key, out var type)) continue;
+            var c = CardsForm.ParseColor(kv.Value);
+            if (c.HasValue) colors[type] = c.Value;
+        }
+        _editor.SetElementColors(colors);
         if (!string.Equals(_editor.Font.Name, _settings.FontFamily, StringComparison.OrdinalIgnoreCase))
             _editor.SetEditorFont(_settings.FontFamily);
         RefreshToolbarIcons();
@@ -1173,7 +1283,8 @@ public sealed class MainForm : Form
     {
         using var dlg = new AppearanceForm(_settings.FontFamily, _settings.ThemeName,
                                            _settings.Typewriter, _settings.AskElementOnEnter,
-                                           _settings.ShowPageBreaks);
+                                           _settings.ShowPageBreaks, _editor.ZoomFactor,
+                                           _settings.ElementColors);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
 
         _settings.FontFamily = dlg.SelectedFont;
@@ -1181,10 +1292,13 @@ public sealed class MainForm : Form
         _settings.Typewriter = dlg.Typewriter;
         _settings.AskElementOnEnter = dlg.AskElement;
         _settings.ShowPageBreaks = dlg.PageBreaks;
+        _settings.ElementColors = dlg.CustomColors;
+        _settings.Zoom = dlg.SelectedZoom;
 
         if (_typewriterItem != null) _typewriterItem.Checked = dlg.Typewriter;
         if (_askElementItem != null) _askElementItem.Checked = dlg.AskElement;
 
+        SetZoom(dlg.SelectedZoom);
         ApplyAppearance();
         _settings.Save();
     }

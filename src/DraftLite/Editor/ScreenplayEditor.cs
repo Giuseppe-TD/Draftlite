@@ -435,6 +435,7 @@ public sealed class ScreenplayEditor : RichTextBox
                 bool dual = type == ElementType.Character && line.TrimEnd().EndsWith("^");
                 var readable = dual ? line.TrimEnd().TrimEnd('^').TrimEnd() : line;
 
+                _readingType = type;
                 var el = new ScreenElement(type, ReadStyledText(pos, readable, ElementStyle.Get(type).Bold))
                 {
                     Dual = dual
@@ -467,39 +468,56 @@ public sealed class ScreenplayEditor : RichTextBox
         if (string.IsNullOrEmpty(plain)) return plain;
 
         var runs = new List<TextRun>();
-        ReadRange(start, 0, plain.Length, plain, baseBold, runs);
+        var typeColor = _elementColors.TryGetValue(_readingType, out var tc) ? tc : ForeColor;
+        ReadRange(start, 0, plain.Length, plain, baseBold, typeColor, runs);
         return StyledText.Write(runs);
     }
+
+    private ElementType _readingType = ElementType.Action;
 
     /// <summary>
     /// Trova i confini degli stili dimezzando l'intervallo: se un tratto ha un formato
     /// solo, Windows lo dice con una lettura sola. Cosi' un paragrafo costa poche letture
     /// invece di una per carattere.
     /// </summary>
-    private void ReadRange(int origin, int from, int len, string plain, bool baseBold, List<TextRun> runs)
+    private void ReadRange(int origin, int from, int len, string plain, bool baseBold,
+                           Color typeColor, List<TextRun> runs)
     {
         if (len <= 0) return;
 
         Select(origin + from, len);
         var font = SelectionFont;
+        var color = SelectionColor;
+        var back = SelectionBackColor;
 
-        if (font != null || len == 1)
+        // un tratto uniforme si legge in un colpo solo; se e' misto lo si dimezza
+        bool uniform = font != null && !color.IsEmpty && !back.IsEmpty;
+
+        if (uniform || len == 1)
         {
             bool b = font != null && font.Bold && !baseBold;
             bool it = font != null && font.Italic;
             bool u = font != null && font.Underline;
             font?.Dispose();
 
+            string userColor = (!color.IsEmpty && color.ToArgb() != typeColor.ToArgb() &&
+                                color.ToArgb() != ForeColor.ToArgb()) ? ToHex(color) : null;
+
+            string highlight = (!back.IsEmpty && back.ToArgb() != BackColor.ToArgb() &&
+                                back.ToArgb() != _noteBack.ToArgb()) ? ToHex(back) : null;
+
             var piece = plain.Substring(from, len);
+            var candidate = new TextRun(piece, b, it, u, userColor, highlight);
             var last = runs.Count > 0 ? runs[runs.Count - 1] : null;
-            if (last != null && last.Bold == b && last.Italic == it && last.Underline == u) last.Text += piece;
-            else runs.Add(new TextRun(piece, b, it, u));
+            if (last != null && last.SameStyle(candidate)) last.Text += piece;
+            else runs.Add(candidate);
             return;
         }
 
+        font?.Dispose();
         int half = len / 2;
-        ReadRange(origin, from, half, plain, baseBold, runs);
-        ReadRange(origin, from + half, len - half, plain, baseBold, runs);
+        ReadRange(origin, from, half, plain, baseBold, typeColor, runs);
+        ReadRange(origin, from + half, len - half, plain, baseBold, typeColor, runs);
     }
 
     /// <summary>
@@ -530,6 +548,44 @@ public sealed class ScreenplayEditor : RichTextBox
 
         _textCacheValid = false;
         OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Colore del testo sulla selezione. Null rimette quello del tipo di elemento.</summary>
+    public void ApplyTextColor(Color? color)
+    {
+        if (!IsHandleCreated) return;
+        if (SelectionLength == 0 && color == null) return;
+
+        var type = CurrentType;
+        var fallback = _elementColors.TryGetValue(type, out var c) ? c : ForeColor;
+        SelectionColor = color ?? fallback;
+
+        _textCacheValid = false;
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Evidenziatore sulla selezione. Null lo toglie.</summary>
+    public void ApplyHighlight(Color? color)
+    {
+        if (!IsHandleCreated || SelectionLength == 0) return;
+        SelectionBackColor = color ?? BackColor;
+
+        _textCacheValid = false;
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Colore e evidenziatore sotto il cursore, per accendere i pulsanti giusti.</summary>
+    public (Color? Text, Color? Highlight) CurrentColors()
+    {
+        if (!IsHandleCreated) return (null, null);
+        var type = CurrentType;
+        var typeColor = _elementColors.TryGetValue(type, out var c) ? c : ForeColor;
+
+        var col = SelectionColor;
+        var back = SelectionBackColor;
+        return (!col.IsEmpty && col.ToArgb() != typeColor.ToArgb() ? col : (Color?)null,
+                !back.IsEmpty && back.ToArgb() != BackColor.ToArgb() && back.ToArgb() != _noteBack.ToArgb()
+                    ? back : (Color?)null);
     }
 
     /// <summary>Cambia solo il carattere, lasciando intatti stili e colori.</summary>
@@ -598,19 +654,19 @@ public sealed class ScreenplayEditor : RichTextBox
     private string BuildRtf(IList<ScreenElement> els)
     {
         var family = (_fontNormal != null ? _fontNormal.Name : "Courier New").Replace("{", "").Replace("}", "").Replace("\\", "");
-        var sb = new StringBuilder();
-        sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fmodern\fprq1\fcharset0 ").Append(family).Append(";}}");
 
-        // tavolozza: un colore per ogni tipo di elemento, nell'ordine di ElementStyle.All
-        sb.Append(@"{\colortbl ;");
-        var order = ElementStyle.All.ToList();
-        foreach (var st0 in order)
+        // la tavolozza si riempie mentre si scrive il corpo, e finisce in testa al file
+        var palette = new List<Color>();
+        int ColorIndex(Color c)
         {
-            var c = _elementColors.TryGetValue(st0.Type, out var col) ? col : ForeColor;
-            sb.Append(@"\red").Append(c.R).Append(@"\green").Append(c.G).Append(@"\blue").Append(c.B).Append(';');
+            for (int k = 0; k < palette.Count; k++)
+                if (palette[k].ToArgb() == c.ToArgb()) return k + 1;
+            palette.Add(c);
+            return palette.Count;
         }
-        sb.Append('}');
-        sb.Append(@"\viewkind4\uc1");
+
+        var sb = new StringBuilder();
+        var order = ElementStyle.All.ToList();
 
         for (int i = 0; i < els.Count; i++)
         {
@@ -621,7 +677,8 @@ public sealed class ScreenplayEditor : RichTextBox
             if (plainOnly) text = StyledText.Plain(text).ToUpperInvariant();
             if (e.Type == ElementType.Character && e.Dual) text += " ^";
 
-            int colorIndex = order.FindIndex(x => x.Type == e.Type) + 1;
+            var typeColor = _elementColors.TryGetValue(e.Type, out var tc) ? tc : ForeColor;
+            int colorIndex = ColorIndex(typeColor);
 
             sb.Append(@"\pard\f0\fs24");
             sb.Append(@"\li").Append(st.LeftTwips);
@@ -645,18 +702,50 @@ public sealed class ScreenplayEditor : RichTextBox
                     sb.Append(run.Bold || st.Bold ? @"\b" : @"\b0");
                     sb.Append(run.Italic ? @"\i" : @"\i0");
                     sb.Append(run.Underline ? @"\ul" : @"\ulnone");
+
+                    var runColor = ParseHex(run.Color);
+                    sb.Append(@"\cf").Append(runColor.HasValue ? ColorIndex(runColor.Value) : colorIndex);
+
+                    var hl = ParseHex(run.Highlight);
+                    if (hl.HasValue) sb.Append(@"\highlight").Append(ColorIndex(hl.Value));
+                    else sb.Append(@"\highlight0");
+
                     sb.Append(' ');
                     AppendRtfText(sb, run.Text);
                 }
-                sb.Append(@"\b0\i0\ulnone");
+                sb.Append(@"\b0\i0\ulnone\highlight0");
             }
 
             if (i < els.Count - 1) sb.Append(@"\par");
         }
 
-        sb.Append('}');
-        return sb.ToString();
+        var head = new StringBuilder();
+        head.Append(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fmodern\fprq1\fcharset0 ").Append(family).Append(";}}");
+        head.Append(@"{\colortbl ;");
+        foreach (var c in palette)
+            head.Append(@"\red").Append(c.R).Append(@"\green").Append(c.G).Append(@"\blue").Append(c.B).Append(';');
+        head.Append('}');
+        head.Append(@"\viewkind4\uc1");
+
+        return head.Append(sb).Append('}').ToString();
     }
+
+    private static Color? ParseHex(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        var h = hex.Trim().TrimStart('#');
+        if (h.Length != 6) return null;
+        try
+        {
+            return Color.FromArgb(
+                Convert.ToInt32(h.Substring(0, 2), 16),
+                Convert.ToInt32(h.Substring(2, 2), 16),
+                Convert.ToInt32(h.Substring(4, 2), 16));
+        }
+        catch { return null; }
+    }
+
+    private static string ToHex(Color c) => "#" + c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2");
 
     private static void AppendRtfText(StringBuilder sb, string text)
     {
@@ -1204,45 +1293,25 @@ public sealed class ScreenplayEditor : RichTextBox
     public void SetElementColors(IDictionary<ElementType, Color> colors)
     {
         if (colors == null) return;
-        foreach (var kv in colors) _elementColors[kv.Key] = kv.Value;
 
         _chooser.BackColor = BackColor;
         _chooser.ForeColor = ForeColor;
         _suggest.BackColor = BackColor;
         _suggest.ForeColor = ForeColor;
 
-        if (!IsHandleCreated || TextLength == 0) return;
+        if (!IsHandleCreated || TextLength == 0)
+        {
+            foreach (var kv in colors) _elementColors[kv.Key] = kv.Value;
+            return;
+        }
 
-        // ricolora il documento gia' aperto
-        bool saved = _internal;
-        _internal = true;
-        SuspendDrawing();
-        int selStart = SelectionStart, selLen = SelectionLength;
-        var pending = selLen == 0 ? SelectionFont : null;
-        try
-        {
-            var lines = CachedText.Split('\n');
-            int pos = 0;
-            foreach (var line in lines)
-            {
-                if (line.Length > 0)
-                {
-                    Select(pos, 0);
-                    var type = TypeFromParaFormat(GetParaFormat());
-                    Select(pos, line.Length);
-                    if (_elementColors.TryGetValue(type, out var c)) SelectionColor = c;
-                }
-                pos += line.Length + 1;
-            }
-        }
-        finally
-        {
-            Select(selStart, selLen);
-            RestoreCaretFormat(selLen, pending);
-            pending?.Dispose();
-            ResumeDrawing();
-            _internal = saved;
-        }
+        // si rilegge il contenuto con i colori vecchi e lo si riscrive con i nuovi:
+        // cosi' quello che l'utente ha colorato a mano non viene travolto dal tema
+        int caret = SelectionStart;
+        var elements = GetElements();
+        foreach (var kv in colors) _elementColors[kv.Key] = kv.Value;
+        SetElements(elements, false);
+        GoToCharIndex(Math.Min(caret, TextLength), false);
     }
 
     // ------------------------------------------------------------------ INDICE

@@ -12,20 +12,30 @@ public sealed class TextRun
     public bool Italic;
     public bool Underline;
 
+    /// <summary>Colore scelto a mano (#RRGGBB). Null = quello del tipo di elemento.</summary>
+    public string Color;
+    /// <summary>Evidenziatore (#RRGGBB). Null = niente.</summary>
+    public string Highlight;
+
     public TextRun() { }
 
-    public TextRun(string text, bool bold = false, bool italic = false, bool underline = false)
+    public TextRun(string text, bool bold = false, bool italic = false, bool underline = false,
+                   string color = null, string highlight = null)
     {
         Text = text ?? string.Empty;
         Bold = bold;
         Italic = italic;
         Underline = underline;
+        Color = color;
+        Highlight = highlight;
     }
 
     public bool SameStyle(TextRun other)
-        => other != null && Bold == other.Bold && Italic == other.Italic && Underline == other.Underline;
+        => other != null && Bold == other.Bold && Italic == other.Italic && Underline == other.Underline
+           && string.Equals(Color, other.Color, StringComparison.OrdinalIgnoreCase)
+           && string.Equals(Highlight, other.Highlight, StringComparison.OrdinalIgnoreCase);
 
-    public TextRun Clone() => new TextRun(Text, Bold, Italic, Underline);
+    public TextRun Clone() => new TextRun(Text, Bold, Italic, Underline, Color, Highlight);
 }
 
 /// <summary>
@@ -39,7 +49,7 @@ public static class StyledText
     public static string Plain(string text)
     {
         if (string.IsNullOrEmpty(text)) return string.Empty;
-        if (text.IndexOf('*') < 0 && text.IndexOf('_') < 0) return text;
+        if (text.IndexOf('*') < 0 && text.IndexOf('_') < 0 && text.IndexOf('{') < 0) return text;
 
         var sb = new StringBuilder(text.Length);
         foreach (var run in Parse(text)) sb.Append(run.Text);
@@ -47,7 +57,9 @@ public static class StyledText
     }
 
     public static bool HasMarkup(string text)
-        => !string.IsNullOrEmpty(text) && (text.IndexOf('*') >= 0 || text.IndexOf('_') >= 0);
+        => !string.IsNullOrEmpty(text) &&
+           (text.IndexOf('*') >= 0 || text.IndexOf('_') >= 0 || text.IndexOf("{c:", StringComparison.Ordinal) >= 0
+            || text.IndexOf("{h:", StringComparison.Ordinal) >= 0);
 
     /// <summary>Spezza il testo nei suoi pezzi formattati.</summary>
     public static List<TextRun> Parse(string text)
@@ -56,12 +68,13 @@ public static class StyledText
         if (string.IsNullOrEmpty(text)) { runs.Add(new TextRun(string.Empty)); return runs; }
 
         bool bold = false, italic = false, underline = false;
+        string color = null, highlight = null;
         var buffer = new StringBuilder();
 
         void Flush()
         {
             if (buffer.Length == 0) return;
-            runs.Add(new TextRun(buffer.ToString(), bold, italic, underline));
+            runs.Add(new TextRun(buffer.ToString(), bold, italic, underline, color, highlight));
             buffer.Clear();
         }
 
@@ -69,11 +82,34 @@ public static class StyledText
         {
             char c = text[i];
 
-            // \* e \_ sono asterischi e trattini veri
-            if (c == '\\' && i + 1 < text.Length && (text[i + 1] == '*' || text[i + 1] == '_'))
+            // \* \_ e \{ sono caratteri veri, non marcatori
+            if (c == '\\' && i + 1 < text.Length && (text[i + 1] == '*' || text[i + 1] == '_' || text[i + 1] == '{'))
             {
                 buffer.Append(text[i + 1]);
                 i++;
+                continue;
+            }
+
+            // colore ed evidenziatore: {c:RRGGBB} testo {/c}
+            if (c == '{' && i + 2 < text.Length && (text[i + 1] == 'c' || text[i + 1] == 'h') && text[i + 2] == ':')
+            {
+                int close = text.IndexOf('}', i);
+                if (close > i && close - i <= 12)
+                {
+                    var hex = text.Substring(i + 3, close - i - 3).Trim();
+                    Flush();
+                    if (text[i + 1] == 'c') color = "#" + hex.TrimStart('#').ToUpperInvariant();
+                    else highlight = "#" + hex.TrimStart('#').ToUpperInvariant();
+                    i = close;
+                    continue;
+                }
+            }
+            if (c == '{' && i + 3 < text.Length && text[i + 1] == '/' &&
+                (text[i + 2] == 'c' || text[i + 2] == 'h') && text[i + 3] == '}')
+            {
+                Flush();
+                if (text[i + 2] == 'c') color = null; else highlight = null;
+                i += 3;
                 continue;
             }
 
@@ -112,12 +148,17 @@ public static class StyledText
     {
         var sb = new StringBuilder();
         bool bold = false, italic = false, underline = false;
+        string color = null, highlight = null;
 
         foreach (var run in runs)
         {
             if (string.IsNullOrEmpty(run.Text)) continue;
 
             // chiudi quello che non serve piu', nell'ordine inverso di apertura
+            if (highlight != null && !string.Equals(highlight, run.Highlight, StringComparison.OrdinalIgnoreCase))
+            { sb.Append("{/h}"); highlight = null; }
+            if (color != null && !string.Equals(color, run.Color, StringComparison.OrdinalIgnoreCase))
+            { sb.Append("{/c}"); color = null; }
             if (underline && !run.Underline) { sb.Append('_'); underline = false; }
             if (italic && !run.Italic) { sb.Append('*'); italic = false; }
             if (bold && !run.Bold) { sb.Append("**"); bold = false; }
@@ -125,19 +166,34 @@ public static class StyledText
             if (!bold && run.Bold) { sb.Append("**"); bold = true; }
             if (!italic && run.Italic) { sb.Append('*'); italic = true; }
             if (!underline && run.Underline) { sb.Append('_'); underline = true; }
+            if (color == null && !string.IsNullOrEmpty(run.Color))
+            { sb.Append("{c:").Append(run.Color.TrimStart('#')).Append('}'); color = run.Color; }
+            if (highlight == null && !string.IsNullOrEmpty(run.Highlight))
+            { sb.Append("{h:").Append(run.Highlight.TrimStart('#')).Append('}'); highlight = run.Highlight; }
 
             foreach (var c in run.Text)
             {
-                if (c == '*' || c == '_') sb.Append('\\');
+                if (c == '*' || c == '_' || c == '{') sb.Append('\\');
                 sb.Append(c);
             }
         }
 
+        if (highlight != null) sb.Append("{/h}");
+        if (color != null) sb.Append("{/c}");
         if (underline) sb.Append('_');
         if (italic) sb.Append('*');
         if (bold) sb.Append("**");
 
         return sb.ToString();
+    }
+
+    /// <summary>Toglie colori ed evidenziazioni, lasciando grassetto e corsivo: serve per Fountain e FDX.</summary>
+    public static string WithoutColors(string text)
+    {
+        if (!HasMarkup(text)) return text;
+        var runs = Parse(text);
+        foreach (var r in runs) { r.Color = null; r.Highlight = null; }
+        return Write(runs);
     }
 
     /// <summary>
@@ -185,7 +241,8 @@ public static class StyledText
                 var style = styleOf[start + k];
                 var last = line.Count > 0 ? line[line.Count - 1] : null;
                 if (last != null && last.SameStyle(style)) last.Text += plain[start + k];
-                else line.Add(new TextRun(plain[start + k].ToString(), style.Bold, style.Italic, style.Underline));
+                else line.Add(new TextRun(plain[start + k].ToString(), style.Bold, style.Italic, style.Underline,
+                                          style.Color, style.Highlight));
             }
             lineLen += len;
         }
@@ -221,7 +278,8 @@ public static class StyledText
                 var prevStyle = styleOf[Math.Max(0, start - 1)];
                 var last = line.Count > 0 ? line[line.Count - 1] : null;
                 if (last != null && last.SameStyle(prevStyle)) last.Text += ' ';
-                else line.Add(new TextRun(" ", prevStyle.Bold, prevStyle.Italic, prevStyle.Underline));
+                else line.Add(new TextRun(" ", prevStyle.Bold, prevStyle.Italic, prevStyle.Underline,
+                                          prevStyle.Color, prevStyle.Highlight));
                 lineLen++;
                 Add(start, len);
             }

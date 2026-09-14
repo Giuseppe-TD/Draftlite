@@ -164,6 +164,7 @@ public sealed class PdfOptionsForm : Form
     private readonly CheckBox _pageNumbers = new CheckBox { Text = "Numeri di pagina" };
     private readonly CheckBox _sceneNumbers = new CheckBox { Text = "Numeri di scena ai margini" };
     private readonly CheckBox _revisionMarks = new CheckBox { Text = "Asterischi di revisione e colore bozza" };
+    private readonly CheckBox _textColors = new CheckBox { Text = "Stampa anche i colori e le evidenziazioni del testo" };
     private readonly TextBox _watermark = new TextBox();
     private readonly TextBox _copyFor = new TextBox();
 
@@ -175,7 +176,7 @@ public sealed class PdfOptionsForm : Form
         FormBorderStyle = FormBorderStyle.FixedDialog;
         StartPosition = FormStartPosition.CenterParent;
         MaximizeBox = MinimizeBox = false;
-        ClientSize = new Size(440, 300);
+        ClientSize = new Size(440, 324);
         Font = new Font("Segoe UI", 9f);
 
         Controls.Add(new Label { Text = "Formato carta", Left = 14, Top = 17, Width = 100 });
@@ -188,17 +189,18 @@ public sealed class PdfOptionsForm : Form
         _pageNumbers.SetBounds(16, 72, 400, 22); _pageNumbers.Checked = current.PageNumbers;
         _sceneNumbers.SetBounds(16, 96, 400, 22); _sceneNumbers.Checked = current.SceneNumbers;
         _revisionMarks.SetBounds(16, 120, 400, 22); _revisionMarks.Checked = current.RevisionMarks;
+        _textColors.SetBounds(16, 144, 410, 22); _textColors.Checked = current.TextColors;
         Controls.Add(_titlePage); Controls.Add(_pageNumbers);
-        Controls.Add(_sceneNumbers); Controls.Add(_revisionMarks);
+        Controls.Add(_sceneNumbers); Controls.Add(_revisionMarks); Controls.Add(_textColors);
 
-        Controls.Add(new Label { Text = "Filigrana", Left = 14, Top = 157, Width = 100 });
-        _watermark.SetBounds(120, 154, 300, 23);
+        Controls.Add(new Label { Text = "Filigrana", Left = 14, Top = 181, Width = 100 });
+        _watermark.SetBounds(120, 178, 300, 23);
         _watermark.Text = current.Watermark ?? string.Empty;
         _watermark.PlaceholderText = "BOZZA - NON DISTRIBUIRE";
         Controls.Add(_watermark);
 
-        Controls.Add(new Label { Text = "Copia per", Left = 14, Top = 189, Width = 100 });
-        _copyFor.SetBounds(120, 186, 300, 23);
+        Controls.Add(new Label { Text = "Copia per", Left = 14, Top = 213, Width = 100 });
+        _copyFor.SetBounds(120, 210, 300, 23);
         _copyFor.Text = current.CopyFor ?? string.Empty;
         _copyFor.PlaceholderText = "nome del destinatario";
         Controls.Add(_copyFor);
@@ -206,12 +208,12 @@ public sealed class PdfOptionsForm : Form
         Controls.Add(new Label
         {
             Text = "La filigrana appare in diagonale su ogni pagina, il destinatario in fondo.",
-            Left = 16, Top = 216, Width = 410,
+            Left = 16, Top = 240, Width = 410,
             ForeColor = Color.FromArgb(110, 110, 110)
         });
 
-        var ok = new Button { Text = "Esporta...", DialogResult = DialogResult.OK, Width = 100, Left = 228, Top = 250 };
-        var cancel = new Button { Text = "Annulla", DialogResult = DialogResult.Cancel, Width = 100, Left = 332, Top = 250 };
+        var ok = new Button { Text = "Esporta...", DialogResult = DialogResult.OK, Width = 100, Left = 228, Top = 274 };
+        var cancel = new Button { Text = "Annulla", DialogResult = DialogResult.Cancel, Width = 100, Left = 332, Top = 274 };
         Controls.Add(ok);
         Controls.Add(cancel);
         AcceptButton = ok;
@@ -224,6 +226,7 @@ public sealed class PdfOptionsForm : Form
             ps.PageNumbers = _pageNumbers.Checked;
             ps.SceneNumbers = _sceneNumbers.Checked;
             ps.RevisionMarks = _revisionMarks.Checked;
+            ps.TextColors = _textColors.Checked;
             ps.Watermark = string.IsNullOrWhiteSpace(_watermark.Text) ? null : _watermark.Text.Trim();
             ps.CopyFor = string.IsNullOrWhiteSpace(_copyFor.Text) ? null : _copyFor.Text.Trim();
             Setup = ps;

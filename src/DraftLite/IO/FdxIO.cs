@@ -200,7 +200,7 @@ public static class FdxIO
                 p.Add(props);
             }
 
-            p.Add(new XElement("Text", e.Text));
+            p.Add(new XElement("Text", StyledText.Plain(e.Text)));
 
             if (!string.IsNullOrWhiteSpace(e.Note))
             {

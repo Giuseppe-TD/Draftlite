@@ -43,7 +43,8 @@ public sealed class PdfBuilder
     /// <summary>Scrive testo con la baseline a yFromTop punti dal bordo superiore.</summary>
     public void DrawText(double xPt, double yFromTopPt, string text,
                          bool bold = false, bool italic = false,
-                         double gray = 0.0, double fontSize = DefaultFontSize)
+                         double gray = 0.0, double fontSize = DefaultFontSize,
+                         (double R, double G, double B)? rgb = null)
     {
         if (_cur == null) BeginPage();
         if (string.IsNullOrEmpty(text)) return;
@@ -52,7 +53,8 @@ public sealed class PdfBuilder
         string font = FontFor(bold, italic);
 
         Raw("q ");
-        if (gray > 0) Raw(Num(gray) + " g ");
+        if (rgb.HasValue) Raw(Num(rgb.Value.R) + " " + Num(rgb.Value.G) + " " + Num(rgb.Value.B) + " rg ");
+        else if (gray > 0) Raw(Num(gray) + " g ");
         Raw("BT /" + font + " " + Num(fontSize) + " Tf 1 0 0 1 " + Num(xPt) + " " + Num(y) + " Tm ");
         WriteLiteral(text);
         Raw(" Tj ET Q\n");
@@ -66,7 +68,8 @@ public sealed class PdfBuilder
     /// una larghezza fissa, perche' il Courier ha il passo costante.
     /// </summary>
     public void DrawRuns(double xPt, double yFromTopPt, IList<TextRun> runs,
-                         bool forceBold = false, double fontSize = DefaultFontSize)
+                         bool forceBold = false, double fontSize = DefaultFontSize,
+                         bool useColors = false)
     {
         if (runs == null || runs.Count == 0) return;
         double charWidth = fontSize * 0.6;
@@ -75,14 +78,44 @@ public sealed class PdfBuilder
         foreach (var run in runs)
         {
             if (string.IsNullOrEmpty(run.Text)) continue;
-            DrawText(x, yFromTopPt, run.Text, forceBold || run.Bold, run.Italic, 0, fontSize);
-
             double w = run.Text.Length * charWidth;
+
+            if (useColors)
+            {
+                var back = Rgb(run.Highlight);
+                if (back.HasValue)
+                    FillRect(x, yFromTopPt - fontSize * 0.8, w, fontSize * 1.05, back.Value);
+            }
+
+            var fore = useColors ? Rgb(run.Color) : null;
+            DrawText(x, yFromTopPt, run.Text, forceBold || run.Bold, run.Italic, 0, fontSize, fore);
+
             if (run.Underline && run.Text.Trim().Length > 0)
                 DrawLine(x, yFromTopPt + fontSize * 0.16, x + w, yFromTopPt + fontSize * 0.16, 0, 0.6);
 
             x += w;
         }
+    }
+
+    private static (double R, double G, double B)? Rgb(string hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex)) return null;
+        var h = hex.Trim().TrimStart('#');
+        if (h.Length != 6) return null;
+        try
+        {
+            return (Convert.ToInt32(h.Substring(0, 2), 16) / 255.0,
+                    Convert.ToInt32(h.Substring(2, 2), 16) / 255.0,
+                    Convert.ToInt32(h.Substring(4, 2), 16) / 255.0);
+        }
+        catch { return null; }
+    }
+
+    private void FillRect(double x, double yFromTop, double w, double h, (double R, double G, double B) color)
+    {
+        if (_cur == null) BeginPage();
+        Raw("q " + Num(color.R) + " " + Num(color.G) + " " + Num(color.B) + " rg " +
+            Num(x) + " " + Num(HeightPt - yFromTop - h) + " " + Num(w) + " " + Num(h) + " re f Q\n");
     }
 
     /// <summary>Testo ruotato attorno al suo punto iniziale: serve per la filigrana in diagonale.</summary>

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -14,6 +15,7 @@ public sealed class AppSettings
     public bool PageNumbers { get; set; } = true;
     public bool IncludeTitlePage { get; set; } = true;
     public bool RevisionMarks { get; set; } = true;
+    public bool PdfTextColors { get; set; } = false;
     public string Watermark { get; set; } = string.Empty;
     public string CopyFor { get; set; } = string.Empty;
 
@@ -25,6 +27,9 @@ public sealed class AppSettings
     public string FontFamily { get; set; } = "Courier New";
     public string ThemeName { get; set; } = "Carta";
     public bool Typewriter { get; set; } = false;
+
+    /// <summary>Colori scelti a mano per i tipi di elemento: nome tipo -> #RRGGBB.</summary>
+    public Dictionary<string, string> ElementColors { get; set; } = new Dictionary<string, string>();
 
     /// <summary>Menu degli elementi quando si va a capo.</summary>
     public bool AskElementOnEnter { get; set; } = true;
@@ -82,6 +87,7 @@ public sealed class AppSettings
         ps.PageNumbers = PageNumbers;
         ps.IncludeTitlePage = IncludeTitlePage;
         ps.RevisionMarks = RevisionMarks;
+        ps.TextColors = PdfTextColors;
         ps.Watermark = string.IsNullOrWhiteSpace(Watermark) ? null : Watermark;
         ps.CopyFor = string.IsNullOrWhiteSpace(CopyFor) ? null : CopyFor;
         return ps;
@@ -94,6 +100,7 @@ public sealed class AppSettings
         PageNumbers = ps.PageNumbers;
         IncludeTitlePage = ps.IncludeTitlePage;
         RevisionMarks = ps.RevisionMarks;
+        PdfTextColors = ps.TextColors;
         Watermark = ps.Watermark ?? string.Empty;
         CopyFor = ps.CopyFor ?? string.Empty;
     }

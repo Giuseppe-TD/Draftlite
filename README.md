@@ -39,11 +39,17 @@ Vengono salvati come marcatori Fountain (`**così**`, `*così*`, `_così_`), qui
 tutti i formati, e nel PDF escono davvero in Courier grassetto, obliquo e sottolineato.
 
 **Ogni elemento ha il suo colore.** Scene, personaggi, parentetiche e transizioni si
-distinguono a colpo d'occhio mentre scorri. I colori sono solo a schermo: il PDF resta nero.
+distinguono a colpo d'occhio mentre scorri — e i colori li decidi tu, uno per uno, in
+*Aspetto*: se li vuoi tutti neri come su carta, basta metterli neri.
+
+**Colore e evidenziatore sul testo.** Selezioni e colori, come in Word: una battuta in rosso
+perché non convince, una riga evidenziata in giallo da rivedere domani. Restano nel file `.dlite`
+e a schermo; nel PDF di consegna spariscono, a meno che tu non spunti *Stampa anche i colori*
+nella finestra di esportazione.
 
 **Come ti pare.** Tema carta (avorio, riposante) oltre a chiaro, seppia e scuro; carattere a
-scelta tra quelli a larghezza fissa; macchina da scrivere che tiene la riga corrente a metà
-schermo (`F11`).
+scelta tra quelli a larghezza fissa; ingrandimento dal 75% al 200%; macchina da scrivere che
+tiene la riga corrente a metà schermo (`F11`).
 
 **Le pagine si vedono.** Nel margine del foglio compaiono il numero di pagina e la riga di
 stacco dove il PDF andrà a capo: sai sempre a che pagina sei mentre scrivi.
@@ -77,7 +83,7 @@ file, datata; restano le ultime dieci. Più il salvataggio automatico ogni due m
 
 | Formato | Apri | Salva | Note |
 |---|:--:|:--:|---|
-| `.dlite` | ✔ | ✔ | Nativo. JSON leggibile, ottimo con git. L'unico che conserva tutto |
+| `.dlite` | ✔ | ✔ | Nativo. JSON leggibile, ottimo con git. L'unico che conserva tutto, colori compresi |
 | `.fountain` `.spmd` | ✔ | ✔ | Standard aperto: note, sinossi, numeri di scena, dual dialogue e stili del testo |
 | `.fdx` `.fdxt` | ✔ | ✔ | Final Draft, anche i modelli. Con ScriptNote, SceneProperties e DualDialogue |
 | `.docx` `.rtf` `.txt` | ✔ | — | Import: gli elementi si riconoscono dai rientri, o dalle maiuscole se non ce ne sono |
@@ -101,6 +107,7 @@ Tab su un nome   apre la parentetica             Ctrl+5   Dialogo
 Invio su vuoto   torna ad Azione                 Ctrl+6   Transizione
 
 Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato   Ctrl+D dialogo simultaneo
+Colore del testo ed evidenziatore: menù Formato, o i due pulsanti colorati in barra
 Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF   Ctrl+F trova
 F6 schede scena   F7 frontespizio   F8 statistiche   F9 pannello laterale
 F11 macchina da scrivere   Ctrl+M nota   Ctrl+ +/- zoom   F1 aiuto
@@ -151,8 +158,8 @@ Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Li
 L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.3.0 installer\DraftLite.iss
-# esce in installer\Output\DraftLite-Setup-1.3.0.exe
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.4.0 installer\DraftLite.iss
+# esce in installer\Output\DraftLite-Setup-1.4.0.exe
 ```
 
 La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
@@ -160,7 +167,7 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-git tag v1.3.0 && git push origin v1.3.0
+git tag v1.4.0 && git push origin v1.4.0
 ```
 
 I file della release hanno sempre lo stesso nome, quindi questi due link valgono per sempre e

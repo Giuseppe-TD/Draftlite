@@ -20,6 +20,15 @@ public sealed class PageSetup
     public bool IncludeTitlePage { get; set; } = true;
     public bool SceneNumbers { get; set; } = false;
 
+    /// <summary>Stampa gli asterischi delle righe cambiate e il colore della bozza.</summary>
+    public bool RevisionMarks { get; set; } = true;
+
+    /// <summary>Scritta in diagonale su ogni pagina (es. "BOZZA - NON DISTRIBUIRE").</summary>
+    public string Watermark { get; set; }
+
+    /// <summary>Destinatario della copia, stampato in fondo a ogni pagina.</summary>
+    public string CopyFor { get; set; }
+
     public static PageSetup A4() => new PageSetup
     {
         PaperName = "A4",

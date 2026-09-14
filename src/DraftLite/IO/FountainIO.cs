@@ -3,18 +3,22 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using DraftLite.Model;
 
 namespace DraftLite.IO;
 
 /// <summary>
 /// Import/export Fountain (.fountain / .spmd / .txt). Formato testo puro, standard aperto,
-/// lo legge anche Final Draft. Implementazione volutamente centrata sugli elementi che
-/// DraftLite gestisce: scene, azione, personaggio, parentetica, dialogo, transizione.
-/// Sezioni (#), synopsis (=) e note ([[...]]) vengono ignorate in lettura.
+/// lo legge anche Final Draft. Oltre agli elementi gestisce le estensioni standard che
+/// DraftLite usa: note [[...]], sinossi con =, numeri di scena #12A# e dialogo simultaneo ^.
+/// Le sezioni (#) vengono ignorate in lettura; il colore delle schede esiste solo nel .dlite.
 /// </summary>
 public static class FountainIO
 {
+    private static readonly Regex SceneNumberPattern = new Regex(@"\s*#([\w.\-]+)#\s*$", RegexOptions.Compiled);
+    private static readonly Regex InlineNotePattern = new Regex(@"\[\[(.+?)\]\]", RegexOptions.Compiled | RegexOptions.Singleline);
+
     // ---------------------------------------------------------------- LETTURA
 
     public static Screenplay Load(string path)
@@ -27,18 +31,41 @@ public static class FountainIO
 
         text = text.Replace("\r\n", "\n").Replace('\r', '\n');
         var lines = text.Split('\n');
-        int i = 0;
-
-        i = ParseTitlePage(lines, sp.TitlePage);
+        int i = ParseTitlePage(lines, sp.TitlePage);
 
         bool prevBlank = true;
         var pendingAction = new List<string>();
+        var pendingNotes = new List<string>();
+
+        ScreenElement Last() => sp.Elements.Count > 0 ? sp.Elements[sp.Elements.Count - 1] : null;
+
+        void AttachNotes()
+        {
+            if (pendingNotes.Count == 0) return;
+            var target = Last();
+            if (target != null)
+            {
+                var joined = string.Join("\n", pendingNotes);
+                target.Note = string.IsNullOrWhiteSpace(target.Note) ? joined : target.Note + "\n" + joined;
+            }
+            pendingNotes.Clear();
+        }
 
         void FlushAction()
         {
             if (pendingAction.Count == 0) return;
             sp.Elements.Add(new ScreenElement(ElementType.Action, string.Join(" ", pendingAction).Trim()));
             pendingAction.Clear();
+            AttachNotes();
+        }
+
+        /// estrae le note inline e restituisce il testo ripulito
+        string TakeNotes(string s)
+        {
+            var m = InlineNotePattern.Matches(s);
+            if (m.Count == 0) return s;
+            foreach (Match x in m) pendingNotes.Add(x.Groups[1].Value.Trim());
+            return InlineNotePattern.Replace(s, string.Empty).Trim();
         }
 
         while (i < lines.Length)
@@ -49,43 +76,70 @@ public static class FountainIO
             if (t.Length == 0)
             {
                 FlushAction();
+                AttachNotes();
                 prevBlank = true;
                 i++;
                 continue;
             }
 
-            // Note e blocchi che non ci interessano
-            if (t.StartsWith("[[") || t.StartsWith("=") || t.StartsWith("#") ||
-                t.StartsWith("~") || t == "===")
+            // nota su riga propria
+            if (t.StartsWith("[[") && t.EndsWith("]]"))
+            {
+                pendingNotes.Add(t.Substring(2, t.Length - 4).Trim());
+                if (pendingAction.Count == 0) AttachNotes();
+                i++;
+                continue;
+            }
+
+            // sinossi: appartiene alla scena appena letta
+            if (t.StartsWith("="))
+            {
+                var syn = t.TrimStart('=').Trim();
+                var target = sp.Elements.LastOrDefault(e => e.Type == ElementType.SceneHeading);
+                if (target != null && syn.Length > 0)
+                    target.Synopsis = string.IsNullOrWhiteSpace(target.Synopsis) ? syn : target.Synopsis + " " + syn;
+                i++;
+                continue;
+            }
+
+            // sezioni e altri blocchi che non ci interessano
+            if (t.StartsWith("#") || t.StartsWith("~") || t == "===")
             {
                 i++;
                 prevBlank = false;
                 continue;
             }
 
+            t = TakeNotes(t);
+            if (t.Length == 0) { i++; continue; }
+
             // --- forzature esplicite Fountain
             if (t.StartsWith(".") && !t.StartsWith(".."))
             {
                 FlushAction();
-                sp.Elements.Add(new ScreenElement(ElementType.SceneHeading, t.Substring(1).Trim().ToUpperInvariant()));
+                sp.Elements.Add(MakeScene(t.Substring(1).Trim()));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
             if (t.StartsWith("!"))
             {
                 FlushAction();
                 sp.Elements.Add(new ScreenElement(ElementType.Action, t.Substring(1).Trim()));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
             if (t.StartsWith(">") && !t.EndsWith("<"))
             {
                 FlushAction();
                 sp.Elements.Add(new ScreenElement(ElementType.Transition, t.Substring(1).Trim().ToUpperInvariant()));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
             if (t.StartsWith(">") && t.EndsWith("<"))   // testo centrato: lo trattiamo come azione
             {
                 FlushAction();
                 sp.Elements.Add(new ScreenElement(ElementType.Action, t.Trim('>', '<').Trim()));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
 
@@ -96,15 +150,17 @@ public static class FountainIO
             if (prevBlank && !forcedCharacter && Screenplay.LooksLikeSceneHeading(t))
             {
                 FlushAction();
-                sp.Elements.Add(new ScreenElement(ElementType.SceneHeading, t.ToUpperInvariant()));
+                sp.Elements.Add(MakeScene(t));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
 
-            // --- transizione non forzata (TUTTA MAIUSCOLA e finisce con TO:)
+            // --- transizione non forzata (TUTTA MAIUSCOLA e finisce con TO: o formula chiusa)
             if (prevBlank && !forcedCharacter && IsUpper(t) && Screenplay.TransitionPattern.IsMatch(t))
             {
                 FlushAction();
                 sp.Elements.Add(new ScreenElement(ElementType.Transition, t));
+                AttachNotes();
                 i++; prevBlank = false; continue;
             }
 
@@ -113,7 +169,12 @@ public static class FountainIO
             if (prevBlank && nextNotBlank && (forcedCharacter || IsCharacterCue(cue)))
             {
                 FlushAction();
-                sp.Elements.Add(new ScreenElement(ElementType.Character, cue.ToUpperInvariant()));
+
+                bool dual = cue.TrimEnd().EndsWith("^");
+                if (dual) cue = cue.TrimEnd().TrimEnd('^').Trim();
+
+                sp.Elements.Add(new ScreenElement(ElementType.Character, cue.ToUpperInvariant()) { Dual = dual });
+                AttachNotes();
                 i++;
 
                 var speech = new List<string>();
@@ -122,19 +183,23 @@ public static class FountainIO
                     if (speech.Count == 0) return;
                     sp.Elements.Add(new ScreenElement(ElementType.Dialogue, string.Join(" ", speech).Trim()));
                     speech.Clear();
+                    AttachNotes();
                 }
 
                 while (i < lines.Length && lines[i].Trim().Length > 0)
                 {
-                    var d = lines[i].Trim();
+                    var d = TakeNotes(lines[i].Trim());
+                    if (d.Length == 0) { i++; continue; }
+
                     if (d.StartsWith("(") && d.EndsWith(")"))
                     {
                         FlushSpeech();
                         sp.Elements.Add(new ScreenElement(ElementType.Parenthetical, d));
+                        AttachNotes();
                     }
                     else
                     {
-                        speech.Add(d.TrimEnd('^').Trim());
+                        speech.Add(d);
                     }
                     i++;
                 }
@@ -150,7 +215,20 @@ public static class FountainIO
         }
 
         FlushAction();
+        AttachNotes();
         return sp;
+    }
+
+    private static ScreenElement MakeScene(string text)
+    {
+        string number = null;
+        var m = SceneNumberPattern.Match(text);
+        if (m.Success)
+        {
+            number = m.Groups[1].Value;
+            text = text.Substring(0, m.Index).Trim();
+        }
+        return new ScreenElement(ElementType.SceneHeading, text.ToUpperInvariant()) { Number = number };
     }
 
     private static int ParseTitlePage(string[] lines, TitlePage tp)
@@ -159,7 +237,6 @@ public static class FountainIO
         while (i < lines.Length && lines[i].Trim().Length == 0) i++;
         if (i >= lines.Length) return i;
 
-        // il frontespizio Fountain esiste solo se la prima riga utile e' "Chiave: valore"
         var first = lines[i];
         int colon = first.IndexOf(':');
         if (colon <= 0 || first.StartsWith(" ") || first.StartsWith("\t")) return 0;
@@ -233,6 +310,7 @@ public static class FountainIO
     private static bool IsCharacterCue(string s)
     {
         if (string.IsNullOrWhiteSpace(s) || s.Length > 60) return false;
+        s = s.TrimEnd('^').Trim();
         if (s.EndsWith(":")) return false;
         if (Screenplay.LooksLikeSceneHeading(s)) return false;
         if (Screenplay.TransitionPattern.IsMatch(s)) return false;
@@ -289,22 +367,36 @@ public static class FountainIO
             {
                 case ElementType.SceneHeading:
                     sb.Append(Screenplay.LooksLikeSceneHeading(e.Text) ? e.Text : "." + e.Text);
+                    if (!string.IsNullOrWhiteSpace(e.Number)) sb.Append(" #").Append(e.Number.Trim()).Append('#');
                     break;
+
                 case ElementType.Character:
                     sb.Append(IsUpper(e.Text) ? e.Text : "@" + e.Text);
+                    if (e.Dual) sb.Append(" ^");
                     break;
+
                 case ElementType.Transition:
                     sb.Append(Screenplay.TransitionPattern.IsMatch(e.Text) && IsUpper(e.Text) ? e.Text : "> " + e.Text);
                     break;
+
                 case ElementType.Action:
                     // un'azione tutta maiuscola verrebbe riletta come personaggio: forziamola
                     sb.Append(IsUpper(e.Text) || Screenplay.LooksLikeSceneHeading(e.Text) ? "!" + e.Text : e.Text);
                     break;
+
                 default:
                     sb.Append(e.Text);
                     break;
             }
             sb.Append('\n');
+
+            if (!string.IsNullOrWhiteSpace(e.Note))
+                foreach (var line in e.Note.Replace("\r", "").Split('\n'))
+                    if (line.Trim().Length > 0)
+                        sb.Append("[[").Append(line.Trim()).Append("]]").Append('\n');
+
+            if (e.Type == ElementType.SceneHeading && !string.IsNullOrWhiteSpace(e.Synopsis))
+                sb.Append("= ").Append(e.Synopsis.Replace("\n", " ").Trim()).Append('\n');
 
             prev = e.Type;
             first = false;

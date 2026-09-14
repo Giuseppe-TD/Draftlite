@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -10,6 +11,8 @@ namespace DraftLite.IO;
 /// <summary>
 /// Formato nativo .dlite: JSON leggibile, versionabile con git, facile da rigenerare
 /// a mano se un giorno serve. Nessun binario, nessuna sorpresa.
+/// E' l'unico formato che conserva tutto: note, sinossi, colori delle schede,
+/// numeri di scena bloccati e stato della revisione.
 /// </summary>
 public static class DraftLiteFile
 {
@@ -18,6 +21,7 @@ public static class DraftLiteFile
     private static readonly JsonSerializerOptions Options = new JsonSerializerOptions
     {
         WriteIndented = true,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
         Converters = { new JsonStringEnumConverter() },
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
@@ -25,10 +29,11 @@ public static class DraftLiteFile
     private sealed class Dto
     {
         public string Format { get; set; } = "draftlite";
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
         public string Generator { get; set; } = "DraftLite";
         public TitlePage TitlePage { get; set; } = new TitlePage();
-        public System.Collections.Generic.List<ScreenElement> Elements { get; set; } = new();
+        public Revision Revision { get; set; } = new Revision();
+        public List<ScreenElement> Elements { get; set; } = new List<ScreenElement>();
     }
 
     public static void Save(string path, Screenplay sp)
@@ -36,6 +41,7 @@ public static class DraftLiteFile
         var dto = new Dto
         {
             TitlePage = sp.TitlePage,
+            Revision = sp.Revision,
             Elements = sp.Elements
         };
         var json = JsonSerializer.Serialize(dto, Options);
@@ -47,10 +53,12 @@ public static class DraftLiteFile
         var json = File.ReadAllText(path, Encoding.UTF8);
         var dto = JsonSerializer.Deserialize<Dto>(json, Options);
         if (dto == null) throw new InvalidDataException("File .dlite non valido o vuoto.");
+
         var sp = new Screenplay
         {
             TitlePage = dto.TitlePage ?? new TitlePage(),
-            Elements = dto.Elements ?? new System.Collections.Generic.List<ScreenElement>()
+            Revision = dto.Revision ?? new Revision(),
+            Elements = dto.Elements ?? new List<ScreenElement>()
         };
         foreach (var e in sp.Elements)
             e.Text ??= string.Empty;

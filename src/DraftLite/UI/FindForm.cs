@@ -37,7 +37,8 @@ public sealed class FindForm : Form
         var next = new Button { Text = "Trova", Left = 330, Top = 11, Width = 88 };
         var rep = new Button { Text = "Sostituisci", Left = 330, Top = 43, Width = 88 };
         var all = new Button { Text = "Sostituisci tutto", Left = 240, Top = 104, Width = 110 };
-        var close = new Button { Text = "Chiudi", Left = 356, Top = 104, Width = 62, DialogResult = DialogResult.Cancel };
+        var close = new Button { Text = "Chiudi", Left = 356, Top = 104, Width = 62 };
+        close.Click += (s, e) => Close();
 
         next.Click += (s, e) => FindNext();
         rep.Click += (s, e) => ReplaceOne();

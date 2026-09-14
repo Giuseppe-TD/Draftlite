@@ -15,7 +15,8 @@ namespace DraftLite.IO;
 /// </summary>
 public sealed class PdfBuilder
 {
-    private const double FontSize = 12.0;
+    public const double DefaultFontSize = 12.0;
+
     private readonly List<MemoryStream> _pages = new List<MemoryStream>();
     private MemoryStream _cur;
 
@@ -30,6 +31,8 @@ public sealed class PdfBuilder
         HeightPt = heightPt;
     }
 
+    public int PageCount => _pages.Count;
+
     public void BeginPage()
     {
         _cur = new MemoryStream();
@@ -37,7 +40,9 @@ public sealed class PdfBuilder
     }
 
     /// <summary>Scrive testo con la baseline a yFromTop punti dal bordo superiore.</summary>
-    public void DrawText(double xPt, double yFromTopPt, string text, bool bold = false, bool italic = false)
+    public void DrawText(double xPt, double yFromTopPt, string text,
+                         bool bold = false, bool italic = false,
+                         double gray = 0.0, double fontSize = DefaultFontSize)
     {
         if (_cur == null) BeginPage();
         if (string.IsNullOrEmpty(text)) return;
@@ -45,9 +50,40 @@ public sealed class PdfBuilder
         double y = HeightPt - yFromTopPt;
         string font = bold ? "F2" : italic ? "F3" : "F1";
 
-        Raw("BT /" + font + " " + Num(FontSize) + " Tf 1 0 0 1 " + Num(xPt) + " " + Num(y) + " Tm ");
+        Raw("q ");
+        if (gray > 0) Raw(Num(gray) + " g ");
+        Raw("BT /" + font + " " + Num(fontSize) + " Tf 1 0 0 1 " + Num(xPt) + " " + Num(y) + " Tm ");
         WriteLiteral(text);
-        Raw(" Tj ET\n");
+        Raw(" Tj ET Q\n");
+    }
+
+    /// <summary>Testo ruotato attorno al suo punto iniziale: serve per la filigrana in diagonale.</summary>
+    public void DrawRotatedText(double xPt, double yFromTopPt, string text, double angleDeg,
+                                double fontSize, double gray, bool bold = true)
+    {
+        if (_cur == null) BeginPage();
+        if (string.IsNullOrEmpty(text)) return;
+
+        double y = HeightPt - yFromTopPt;
+        double rad = angleDeg * Math.PI / 180.0;
+        double cos = Math.Cos(rad), sin = Math.Sin(rad);
+        string font = bold ? "F2" : "F1";
+
+        Raw("q ");
+        Raw(Num(gray) + " g ");
+        Raw("BT /" + font + " " + Num(fontSize) + " Tf ");
+        Raw(Num(cos) + " " + Num(sin) + " " + Num(-sin) + " " + Num(cos) + " " + Num(xPt) + " " + Num(y) + " Tm ");
+        WriteLiteral(text);
+        Raw(" Tj ET Q\n");
+    }
+
+    /// <summary>Riga orizzontale sottile (usata dai report).</summary>
+    public void DrawLine(double x1, double yFromTop1, double x2, double yFromTop2, double gray = 0.6, double width = 0.5)
+    {
+        if (_cur == null) BeginPage();
+        Raw("q " + Num(gray) + " G " + Num(width) + " w " +
+            Num(x1) + " " + Num(HeightPt - yFromTop1) + " m " +
+            Num(x2) + " " + Num(HeightPt - yFromTop2) + " l S Q\n");
     }
 
     private void Raw(string ascii)
@@ -102,13 +138,13 @@ public sealed class PdfBuilder
             case '‹': return 0x8B;
             case 'Œ': return 0x8C;
             case 'Ž': return 0x8E;
-            case '‘': return 0x91; // '
-            case '’': return 0x92; // '
-            case '“': return 0x93; // "
-            case '”': return 0x94; // "
+            case '‘': return 0x91;
+            case '’': return 0x92;
+            case '“': return 0x93;
+            case '”': return 0x94;
             case '•': return 0x95;
-            case '–': return 0x96; // en dash
-            case '—': return 0x97; // em dash
+            case '–': return 0x96;
+            case '—': return 0x97;
             case '˜': return 0x98;
             case '™': return 0x99;
             case 'š': return 0x9A;
@@ -125,15 +161,13 @@ public sealed class PdfBuilder
 
     public byte[] Build()
     {
-        var objects = new List<byte[]>();   // objects[0] => oggetto 1
+        var objects = new List<byte[]>();
 
         int pageCount = _pages.Count;
-        int firstPageObj = 6;               // 1 catalog, 2 pages, 3..5 font
+        int firstPageObj = 6;   // 1 catalog, 2 pages, 3..5 font
 
-        // 1 - Catalog
         objects.Add(Ascii("<< /Type /Catalog /Pages 2 0 R >>"));
 
-        // 2 - Pages
         var kids = new StringBuilder();
         for (int i = 0; i < pageCount; i++)
         {
@@ -142,7 +176,6 @@ public sealed class PdfBuilder
         }
         objects.Add(Ascii("<< /Type /Pages /Count " + pageCount + " /Kids [" + kids + "] >>"));
 
-        // 3..5 - font standard
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier /Encoding /WinAnsiEncoding >>"));
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Bold /Encoding /WinAnsiEncoding >>"));
         objects.Add(Ascii("<< /Type /Font /Subtype /Type1 /BaseFont /Courier-Oblique /Encoding /WinAnsiEncoding >>"));
@@ -165,7 +198,6 @@ public sealed class PdfBuilder
             objects.Add(Concat(head, deflated, tail));
         }
 
-        // Info
         int infoObj = objects.Count + 1;
         objects.Add(Concat(Ascii("<< /Producer (DraftLite) /Creator (DraftLite) /Title "),
                            LiteralBytes(Title ?? string.Empty),

@@ -55,6 +55,7 @@ internal static class NativeMethods
     public const int WM_USER = 0x0400;
     public const int WM_SETREDRAW = 0x000B;
 
+    public const int EM_LINESCROLL = WM_USER + 6;       // 0x406
     public const int EM_GETPARAFORMAT = WM_USER + 61;   // 0x43D
     public const int EM_SETPARAFORMAT = WM_USER + 71;   // 0x447
     public const int EM_SETTARGETDEVICE = WM_USER + 72; // 0x448

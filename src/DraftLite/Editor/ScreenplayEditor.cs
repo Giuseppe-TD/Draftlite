@@ -17,8 +17,8 @@ namespace DraftLite.Editor;
 /// </summary>
 public sealed class ScreenplayEditor : RichTextBox
 {
-    private readonly Font _fontNormal;
-    private readonly Font _fontBold;
+    private Font _fontNormal;
+    private Font _fontBold;
     private readonly ListBox _suggest;
     private readonly List<string> _suggestValues = new List<string>();
     private readonly System.Windows.Forms.Timer _indexTimer;
@@ -32,6 +32,16 @@ public sealed class ScreenplayEditor : RichTextBox
     private bool _fromTyping;
     private bool _indexValid;
     private List<(int CharIndex, int Number, string Text)> _sceneIndex = new List<(int, int, string)>();
+
+    // dati ancorati ai paragrafi (note, sinossi, colore scheda, numero di scena):
+    // non stanno nel testo, quindi vanno riallineati quando il testo cambia
+    private List<ElementMeta> _meta = new List<ElementMeta>();
+    private List<string> _metaKeys = new List<string>();
+    private readonly Dictionary<string, ElementMeta> _orphanMeta = new Dictionary<string, ElementMeta>();
+
+    private bool _typewriter;
+    private bool _hadNotes;
+    private Color _noteBack = Color.FromArgb(255, 246, 200);
 
     /// <summary>
     /// Copia del testo valida fino alla prossima modifica: leggere Text chiama Windows
@@ -169,6 +179,7 @@ public sealed class ScreenplayEditor : RichTextBox
         finally
         {
             Select(selStart, selLen);
+            RestoreCaretFormat(selLen);
             ResumeDrawing();
             _internal = saved;
         }
@@ -368,6 +379,8 @@ public sealed class ScreenplayEditor : RichTextBox
             return result;
         }
 
+        SyncMeta();
+
         int selStart = SelectionStart, selLen = SelectionLength;
         var scroll = GetScrollPos();
         bool saved = _internal;
@@ -376,10 +389,24 @@ public sealed class ScreenplayEditor : RichTextBox
         try
         {
             int pos = 0;
-            foreach (var line in lines)
+            for (int i = 0; i < lines.Length; i++)
             {
+                var line = lines[i];
                 Select(pos, 0);
-                result.Add(new ScreenElement(TypeFromParaFormat(GetParaFormat()), line));
+                var type = TypeFromParaFormat(GetParaFormat());
+
+                var el = new ScreenElement(type, line);
+
+                // il dialogo simultaneo vive nel testo come "^" finale, alla maniera di Fountain:
+                // cosi' sopravvive a copia, incolla e annulla senza bisogno di agganci
+                if (type == ElementType.Character && line.TrimEnd().EndsWith("^"))
+                {
+                    el.Dual = true;
+                    el.Text = line.TrimEnd().TrimEnd('^').TrimEnd();
+                }
+
+                if (i < _meta.Count) el.ApplyMeta(_meta[i]);
+                result.Add(el);
                 pos += line.Length + 1;
             }
         }
@@ -401,6 +428,8 @@ public sealed class ScreenplayEditor : RichTextBox
         bool savedFlag = _internal;
         _internal = true;
         var zoom = ZoomFactor;
+        int keepCaret = clearUndo ? 0 : SelectionStart;
+        var keepScroll = GetScrollPos();
         try
         {
             if (els == null || els.Count == 0)
@@ -409,19 +438,55 @@ public sealed class ScreenplayEditor : RichTextBox
             Rtf = BuildRtf(els);
             Select(0, 0);
             if (clearUndo) ClearUndo();
+            RestoreFontEverywhere();
+
+            _meta = els.Select(x => x.Meta).ToList();
+            _metaKeys = BuildKeys(els);
             if (Math.Abs(ZoomFactor - zoom) > 0.001f) ZoomFactor = zoom;   // l'RTF resetta lo zoom
             ApplyPageWidth();
+
+            if (!clearUndo)
+            {
+                Select(Math.Max(0, Math.Min(keepCaret, TextLength)), 0);
+                SetScrollPos(keepScroll);
+            }
         }
         finally { _internal = savedFlag; _textCacheValid = false; _indexValid = false; }
 
+        RefreshNoteHighlights();
         RebuildIndex();
         RaiseTypeChanged(true);
     }
 
-    private static string BuildRtf(IList<ScreenElement> els)
+    /// <summary>Testo dei paragrafi come finisce davvero nel controllo (dual compreso).</summary>
+    private static List<string> BuildKeys(IList<ScreenElement> els)
     {
+        var keys = new List<string>(els.Count);
+        foreach (var e in els)
+        {
+            var st = ElementStyle.Get(e.Type);
+            var text = e.Text ?? string.Empty;
+            if (st.UpperCase) text = text.ToUpperInvariant();
+            if (e.Type == ElementType.Character && e.Dual) text += " ^";
+            keys.Add(text);
+        }
+        return keys;
+    }
+
+    /// <summary>Riporta il carattere scelto dall'utente su tutto il documento (l'RTF lo azzera).</summary>
+    private void RestoreFontEverywhere()
+    {
+        int selStart = SelectionStart, selLen = SelectionLength;
+        SelectAll();
+        SelectionFont = _fontNormal;
+        Select(Math.Min(selStart, TextLength), Math.Min(selLen, Math.Max(0, TextLength - selStart)));
+    }
+
+    private string BuildRtf(IList<ScreenElement> els)
+    {
+        var family = (_fontNormal != null ? _fontNormal.Name : "Courier New").Replace("{", "").Replace("}", "").Replace("\\", "");
         var sb = new StringBuilder();
-        sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fmodern\fprq1\fcharset0 Courier New;}}");
+        sb.Append(@"{\rtf1\ansi\ansicpg1252\deff0{\fonttbl{\f0\fmodern\fprq1\fcharset0 ").Append(family).Append(";}}");
         sb.Append(@"\viewkind4\uc1");
 
         for (int i = 0; i < els.Count; i++)
@@ -430,6 +495,7 @@ public sealed class ScreenplayEditor : RichTextBox
             var st = ElementStyle.Get(e.Type);
             var text = e.Text ?? string.Empty;
             if (st.UpperCase) text = text.ToUpperInvariant();
+            if (e.Type == ElementType.Character && e.Dual) text += " ^";
 
             sb.Append(@"\pard\f0\fs24");
             sb.Append(@"\li").Append(st.LeftTwips);
@@ -463,6 +529,94 @@ public sealed class ScreenplayEditor : RichTextBox
     }
 
     // ------------------------------------------------------------------ TASTIERA
+
+    private const int WM_PASTE = 0x0302;
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_PASTE && !_internal)
+        {
+            if (PasteSmart()) return;
+        }
+        base.WndProc(ref m);
+    }
+
+    /// <summary>Incolla dagli appunti passando dalla riclassificazione (voce di menu e Ctrl+V).</summary>
+    public void PasteFromClipboard()
+    {
+        if (!PasteSmart()) Paste();
+    }
+
+    /// <summary>
+    /// Incollare da Word o dal browser porterebbe dentro rientri e caratteri altrui, e qui
+    /// il rientro E' il tipo di elemento: il testo estraneo viene quindi riclassificato.
+    /// Il materiale copiato da DraftLite (o da un altro editor di sceneggiature) passa intatto.
+    /// </summary>
+    private bool PasteSmart()
+    {
+        try
+        {
+            if (Clipboard.ContainsData(DataFormats.Rtf))
+            {
+                var rtf = Clipboard.GetData(DataFormats.Rtf) as string;
+                if (rtf != null && (rtf.Contains("\\li3168") || rtf.Contains("\\li2304") || rtf.Contains("\\li1440")))
+                    return false;   // viene da noi: incolla normale
+            }
+
+            if (!Clipboard.ContainsText()) return false;
+            var text = (Clipboard.GetText() ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').TrimEnd('\n');
+            if (text.Length == 0) return true;
+
+            bool saved = _internal;
+            _internal = true;
+            SuspendDrawing();
+            try
+            {
+                if (!text.Contains('\n'))
+                {
+                    var st0 = ElementStyle.Get(CurrentType);
+                    SelectedText = st0.UpperCase ? text.ToUpperInvariant() : text;
+                    return true;
+                }
+
+                int start = SelectionStart;
+                SelectedText = text;
+                int end = SelectionStart;
+
+                var t = CachedText;
+                int from = ParagraphStartAt(t, start);
+                int to = ParagraphEndAt(t, Math.Min(end, t.Length));
+
+                var blocks = new List<(int Start, string Text)>();
+                int p = from;
+                while (p <= to)
+                {
+                    int e = ParagraphEndAt(t, p);
+                    blocks.Add((p, t.Substring(p, e - p)));
+                    if (e >= t.Length) break;
+                    p = e + 1;
+                }
+
+                var types = IO.TextImporter.ClassifyPlainLines(blocks.Select(b => b.Text).ToList());
+                for (int i = 0; i < blocks.Count; i++)
+                    ApplyTypeToParagraph(blocks[i].Start, blocks[i].Text, types[i], true);
+
+                Select(Math.Min(end, TextLength), 0);
+                return true;
+            }
+            finally
+            {
+                ResumeDrawing();
+                _internal = saved;
+                _textCacheValid = false;
+                _indexValid = false;
+                RaiseTypeChanged(true);
+                _indexTimer.Stop();
+                _indexTimer.Start();
+            }
+        }
+        catch { return false; }
+    }
 
     protected override bool IsInputKey(Keys keyData)
     {
@@ -521,6 +675,13 @@ public sealed class ScreenplayEditor : RichTextBox
             if (t.HasValue)
             {
                 ApplyType(t.Value);
+                e.Handled = e.SuppressKeyPress = true;
+                return;
+            }
+
+            if (e.KeyCode == Keys.D)
+            {
+                ToggleDual();
                 e.Handled = e.SuppressKeyPress = true;
                 return;
             }
@@ -643,6 +804,7 @@ public sealed class ScreenplayEditor : RichTextBox
         AutoPromoteSceneHeading();
         UpdateSuggestions();
         RaiseTypeChanged(false);
+        CenterCaret();
         _fromTyping = false;
 
         _indexTimer.Stop();
@@ -654,6 +816,7 @@ public sealed class ScreenplayEditor : RichTextBox
         base.OnSelectionChanged(e);
         if (_internal) return;
         RaiseTypeChanged(false);
+        CenterCaret();
         if (_suggest.Visible) UpdateSuggestions();
     }
 
@@ -810,7 +973,7 @@ public sealed class ScreenplayEditor : RichTextBox
             foreach (var line in lines)
             {
                 var trimmed = line.Trim();
-                if (trimmed.Length > 0 && trimmed.Length <= 70 && trimmed == trimmed.ToUpperInvariant())
+                if (trimmed.Length > 0 && trimmed.Length <= 120 && trimmed == trimmed.ToUpperInvariant())
                 {
                     Select(pos, 0);
                     result.Add((pos, TypeFromParaFormat(GetParaFormat()), trimmed));
@@ -838,6 +1001,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
     private void RebuildIndex()
     {
+        SyncMeta();
         var chars = new List<string>();
         var scenes = new List<string>();
         var index = new List<(int, int, string)>();
@@ -863,6 +1027,7 @@ public sealed class ScreenplayEditor : RichTextBox
         _sceneHeadings = scenes;
         _sceneIndex = index;
         _indexValid = true;
+        RefreshNoteHighlights();
         DocumentIndexed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -888,6 +1053,376 @@ public sealed class ScreenplayEditor : RichTextBox
         Select(index, 0);
         ScrollToCaret();
         if (takeFocus) Focus();
+    }
+
+    // ------------------------------------------------------------------ DATI ANCORATI
+
+    /// <summary>
+    /// Riallinea note, sinossi, colori e numeri di scena ai paragrafi dopo una modifica:
+    /// le parti uguali in testa e in coda restano dove sono, in mezzo si segue la posizione.
+    /// Cosi' una nota resta attaccata alla sua riga anche se sopra ne aggiungi o togli dieci.
+    /// </summary>
+    private void SyncMeta()
+    {
+        var lines = CachedText.Split('\n');
+
+        if (_metaKeys.Count == lines.Length)
+        {
+            bool same = true;
+            for (int i = 0; i < lines.Length; i++)
+                if (!string.Equals(_metaKeys[i], lines[i], StringComparison.Ordinal)) { same = false; break; }
+            if (same) return;
+        }
+
+        var oldKeys = _metaKeys;
+        var oldMeta = _meta;
+        while (oldMeta.Count < oldKeys.Count) oldMeta.Add(null);
+
+        int head = 0;
+        while (head < oldKeys.Count && head < lines.Length &&
+               string.Equals(oldKeys[head], lines[head], StringComparison.Ordinal)) head++;
+
+        int tail = 0;
+        while (tail < oldKeys.Count - head && tail < lines.Length - head &&
+               string.Equals(oldKeys[oldKeys.Count - 1 - tail], lines[lines.Length - 1 - tail], StringComparison.Ordinal))
+            tail++;
+
+        var newMeta = new List<ElementMeta>(lines.Length);
+        for (int i = 0; i < head; i++) newMeta.Add(oldMeta[i]);
+
+        int oldMid = oldKeys.Count - head - tail;
+        int newMid = lines.Length - head - tail;
+
+        // quello che sparisce dal centro va in panchina: se la riga ricompare
+        // (annulla, taglia e incolla, spostamento) si riprende la sua nota
+        for (int k = 0; k < oldMid; k++)
+        {
+            var m = oldMeta[head + k];
+            var key = oldKeys[head + k];
+            if (m != null && !m.IsEmpty && !string.IsNullOrWhiteSpace(key))
+                _orphanMeta[key] = m;
+        }
+        if (_orphanMeta.Count > 400) _orphanMeta.Clear();
+
+        for (int k = 0; k < newMid; k++)
+        {
+            ElementMeta m = k < oldMid ? oldMeta[head + k] : null;
+            var key = lines[head + k];
+            if (m == null && !string.IsNullOrWhiteSpace(key) && _orphanMeta.TryGetValue(key, out var recovered))
+                m = recovered;
+            if (m != null && key != null && _orphanMeta.ContainsKey(key)) _orphanMeta.Remove(key);
+            newMeta.Add(m);
+        }
+
+        for (int k = 0; k < tail; k++)
+            newMeta.Add(oldMeta[oldKeys.Count - tail + k]);
+
+        _meta = newMeta;
+        _metaKeys = new List<string>(lines);
+    }
+
+    public int CurrentParagraphIndex
+    {
+        get
+        {
+            var t = CachedText;
+            int caret = Math.Min(SelectionStart, t.Length);
+            int idx = 0;
+            for (int i = 0; i < caret; i++) if (t[i] == '\n') idx++;
+            return idx;
+        }
+    }
+
+    private int ParagraphStartOfIndex(string t, int paragraphIndex)
+    {
+        int idx = 0, pos = 0;
+        while (idx < paragraphIndex && pos < t.Length)
+        {
+            if (t[pos] == '\n') idx++;
+            pos++;
+        }
+        return pos;
+    }
+
+    private ElementMeta MetaAt(int index, bool create)
+    {
+        SyncMeta();
+        while (_meta.Count <= index) _meta.Add(null);
+        if (_meta[index] == null && create) _meta[index] = new ElementMeta();
+        return _meta[index];
+    }
+
+    /// <summary>Nota ancorata al paragrafo su cui sta il cursore.</summary>
+    public string NoteAtCaret
+    {
+        get
+        {
+            SyncMeta();
+            int i = CurrentParagraphIndex;
+            return i < _meta.Count ? _meta[i]?.Note : null;
+        }
+    }
+
+    public void SetNoteAtCaret(string note)
+    {
+        int i = CurrentParagraphIndex;
+        SetNoteAt(i, note);
+    }
+
+    public void SetNoteAt(int paragraphIndex, string note)
+    {
+        var m = MetaAt(paragraphIndex, true);
+        m.Note = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        if (m.IsEmpty) _meta[paragraphIndex] = null;
+        HighlightParagraph(paragraphIndex, !string.IsNullOrWhiteSpace(note));
+        DocumentIndexed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>Tutte le note del copione, con la posizione a cui saltare.</summary>
+    public List<(int CharIndex, int Paragraph, string Note, string Text)> GetNotes()
+    {
+        SyncMeta();
+        var result = new List<(int, int, string, string)>();
+        var t = CachedText;
+        var lines = t.Split('\n');
+        int pos = 0;
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i < _meta.Count && _meta[i] != null && !string.IsNullOrWhiteSpace(_meta[i].Note))
+                result.Add((pos, i, _meta[i].Note, lines[i].Trim()));
+            pos += lines[i].Length + 1;
+        }
+        return result;
+    }
+
+    private void HighlightParagraph(int paragraphIndex, bool on)
+    {
+        if (!IsHandleCreated) return;
+        var t = CachedText;
+        int start = ParagraphStartOfIndex(t, paragraphIndex);
+        int end = ParagraphEndAt(t, start);
+        if (end <= start) return;
+
+        int selStart = SelectionStart, selLen = SelectionLength;
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            Select(start, end - start);
+            SelectionBackColor = on ? _noteBack : BackColor;
+        }
+        finally
+        {
+            Select(selStart, selLen);
+            RestoreCaretFormat(selLen);
+            ResumeDrawing();
+            _internal = saved;
+        }
+    }
+
+    /// <summary>Ricolora tutte le righe che hanno una nota (dopo un caricamento o un cambio tema).</summary>
+    public void RefreshNoteHighlights()
+    {
+        if (!IsHandleCreated) return;
+        SyncMeta();
+
+        bool anyNote = _meta.Any(m => m != null && !string.IsNullOrWhiteSpace(m.Note));
+        if (!anyNote && !_hadNotes) return;
+        _hadNotes = anyNote;
+
+        var t = CachedText;
+        var lines = t.Split('\n');
+        int selStart = SelectionStart, selLen = SelectionLength;
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            SelectAll();
+            SelectionBackColor = BackColor;
+
+            int pos = 0;
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (i < _meta.Count && _meta[i] != null && !string.IsNullOrWhiteSpace(_meta[i].Note) && lines[i].Length > 0)
+                {
+                    Select(pos, lines[i].Length);
+                    SelectionBackColor = _noteBack;
+                }
+                pos += lines[i].Length + 1;
+            }
+        }
+        finally
+        {
+            Select(selStart, selLen);
+            RestoreCaretFormat(selLen);
+            ResumeDrawing();
+            _internal = saved;
+        }
+    }
+
+    // ------------------------------------------------------------------ DIALOGO SIMULTANEO
+
+    public bool IsDualAtCaret
+    {
+        get
+        {
+            if (CurrentType != ElementType.Character) return false;
+            return CurrentParagraphText.TrimEnd().EndsWith("^");
+        }
+    }
+
+    /// <summary>
+    /// Marca la battuta come simultanea a quella precedente (in PDF finiscono affiancate).
+    /// Il marcatore e' il "^" finale, come in Fountain.
+    /// </summary>
+    public void ToggleDual()
+    {
+        if (CurrentType != ElementType.Character) return;
+
+        var t = CachedText;
+        int caret = Math.Min(SelectionStart, t.Length);
+        int start = ParagraphStartAt(t, caret);
+        int end = ParagraphEndAt(t, caret);
+        var text = t.Substring(start, end - start);
+        var trimmed = text.TrimEnd();
+
+        string updated = trimmed.EndsWith("^")
+            ? trimmed.TrimEnd('^').TrimEnd()
+            : trimmed + " ^";
+
+        bool saved = _internal;
+        _internal = true;
+        try
+        {
+            Select(start, text.Length);
+            SelectedText = updated;
+            Select(start + updated.Length, 0);
+            ApplyTypeToCurrentParagraph(ElementType.Character, false);
+        }
+        finally { _internal = saved; }
+
+        RaiseTypeChanged(true);
+    }
+
+    /// <summary>Aggiunge (V.O.), (F.C.)... al nome del personaggio sotto il cursore.</summary>
+    public void AppendCharacterExtension(string ext)
+    {
+        if (CurrentType != ElementType.Character || string.IsNullOrWhiteSpace(ext)) return;
+
+        var t = CachedText;
+        int caret = Math.Min(SelectionStart, t.Length);
+        int start = ParagraphStartAt(t, caret);
+        int end = ParagraphEndAt(t, caret);
+        var text = t.Substring(start, end - start).TrimEnd();
+        if (text.IndexOf(ext, StringComparison.OrdinalIgnoreCase) >= 0) return;
+
+        bool dual = text.EndsWith("^");
+        if (dual) text = text.TrimEnd('^').TrimEnd();
+        var updated = text + " " + ext.ToUpperInvariant() + (dual ? " ^" : string.Empty);
+
+        bool saved = _internal;
+        _internal = true;
+        try
+        {
+            Select(start, end - start);
+            SelectedText = updated;
+            Select(start + updated.Length, 0);
+            ApplyTypeToCurrentParagraph(ElementType.Character, false);
+        }
+        finally { _internal = saved; }
+
+        RaiseTypeChanged(true);
+    }
+
+    // ------------------------------------------------------------------ ASPETTO
+
+    /// <summary>Tiene la riga che stai scrivendo a meta' schermo, come una macchina da scrivere.</summary>
+    public bool TypewriterMode
+    {
+        get => _typewriter;
+        set { _typewriter = value; if (value) CenterCaret(); }
+    }
+
+    private void CenterCaret()
+    {
+        if (!_typewriter || !IsHandleCreated || ClientSize.Height < 80) return;
+        var pt = GetPositionFromCharIndex(SelectionStart);
+        int lineHeight = Math.Max(1, (int)Math.Round(Font.Height * ZoomFactor));
+        int target = ClientSize.Height / 2;
+        int delta = (pt.Y - target) / lineHeight;
+        if (delta != 0)
+            NativeMethods.SendMessage(Handle, NativeMethods.EM_LINESCROLL, IntPtr.Zero, (IntPtr)delta);
+    }
+
+    /// <summary>Cambia il carattere dell'editor. Il PDF resta in Courier: quello e' lo standard.</summary>
+    public void SetEditorFont(string family)
+    {
+        if (string.IsNullOrWhiteSpace(family)) family = "Courier New";
+        Font newNormal, newBold;
+        try
+        {
+            newNormal = new Font(family, 12f, FontStyle.Regular, GraphicsUnit.Point);
+            newBold = new Font(family, 12f, FontStyle.Bold, GraphicsUnit.Point);
+        }
+        catch { return; }
+
+        var oldNormal = _fontNormal;
+        var oldBold = _fontBold;
+        _fontNormal = newNormal;
+        _fontBold = newBold;
+
+        int selStart = SelectionStart, selLen = SelectionLength;
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            Font = _fontNormal;
+            SelectAll();
+            SelectionFont = _fontNormal;
+            Select(selStart, selLen);
+        }
+        finally
+        {
+            ResumeDrawing();
+            _internal = saved;
+        }
+
+        oldNormal?.Dispose();
+        oldBold?.Dispose();
+
+        ApplyPageWidth();
+        ReapplySceneBold();
+        RefreshNoteHighlights();
+    }
+
+    /// <summary>Colori di carta, inchiostro ed evidenziazione delle note.</summary>
+    public void SetColors(Color back, Color fore, Color noteBack)
+    {
+        _noteBack = noteBack;
+        BackColor = back;
+        ForeColor = fore;
+
+        int selStart = SelectionStart, selLen = SelectionLength;
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            SelectAll();
+            SelectionColor = fore;
+            SelectionBackColor = back;
+            Select(selStart, selLen);
+        }
+        finally
+        {
+            ResumeDrawing();
+            _internal = saved;
+        }
+
+        RefreshNoteHighlights();
     }
 
     // ------------------------------------------------------------------ UTILITA'

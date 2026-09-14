@@ -22,9 +22,16 @@ public sealed class MainForm : Form
         IntegralHeight = false,
         AllowDrop = true
     };
+    private readonly ListBox _noteList = new ListBox
+    {
+        Dock = DockStyle.Fill,
+        BorderStyle = BorderStyle.None,
+        IntegralHeight = false
+    };
+    private readonly TabControl _sideTabs = new TabControl { Dock = DockStyle.Fill };
     private readonly SplitContainer _split = new SplitContainer { Dock = DockStyle.Fill };
-    private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, BackColor = Color.FromArgb(120, 120, 124) };
-    private readonly Panel _page = new Panel { BackColor = Color.White, Padding = new Padding(26, 18, 14, 10) };
+    private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, Tag = "desk" };
+    private readonly Panel _page = new Panel { Padding = new Padding(26, 18, 14, 10), Tag = "page" };
     private readonly StatusStrip _status = new StatusStrip();
     private readonly ToolStripStatusLabel _lblType = new ToolStripStatusLabel { AutoSize = false, Width = 150, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripStatusLabel _lblScene = new ToolStripStatusLabel { AutoSize = false, Width = 300, TextAlign = ContentAlignment.MiddleLeft };
@@ -34,14 +41,19 @@ public sealed class MainForm : Form
     private readonly System.Windows.Forms.Timer _autoSaveTimer = new System.Windows.Forms.Timer { Interval = 120000 };
 
     private AppSettings _settings = AppSettings.Load();
+    private Theme _theme = Theme.Light;
     private TitlePage _titlePage = new TitlePage();
+    private Revision _revision = new Revision();
     private List<(int CharIndex, int Number, string Text)> _scenes = new List<(int, int, string)>();
+    private List<(int CharIndex, int Paragraph, string Note, string Text)> _notes =
+        new List<(int, int, string, string)>();
     private string _path;
     private DocFormat _format = DocFormat.DraftLite;
     private bool _dirty;
     private bool _loading;
     private bool _statsDirty = true;
     private FindForm _findForm;
+    private ToolStripMenuItem _typewriterItem;
 
     public MainForm(string openPath)
     {
@@ -59,6 +71,7 @@ public sealed class MainForm : Form
         _split.Panel1Collapsed = !_settings.ShowNavigator;
 
         NewDocument();
+        ApplyAppearance();
 
         if (!string.IsNullOrEmpty(openPath) && File.Exists(openPath))
             OpenFile(openPath);
@@ -79,16 +92,14 @@ public sealed class MainForm : Form
         _editor.Dock = DockStyle.Fill;
         _pageHost.Controls.Add(_page);
 
-        _split.Panel1.Controls.Add(_sceneList);
-        _split.Panel1.Controls.Add(new Label
-        {
-            Text = "  SCENE",
-            Dock = DockStyle.Top,
-            Height = 26,
-            TextAlign = ContentAlignment.MiddleLeft,
-            BackColor = Color.FromArgb(238, 238, 240),
-            Font = new Font("Segoe UI", 8f, FontStyle.Bold)
-        });
+        var tabScenes = new TabPage("Scene");
+        tabScenes.Controls.Add(_sceneList);
+        var tabNotes = new TabPage("Note");
+        tabNotes.Controls.Add(_noteList);
+        _sideTabs.TabPages.Add(tabScenes);
+        _sideTabs.TabPages.Add(tabNotes);
+
+        _split.Panel1.Controls.Add(_sideTabs);
         _split.Panel2.Controls.Add(_pageHost);
         _split.FixedPanel = FixedPanel.Panel1;
 
@@ -111,11 +122,13 @@ public sealed class MainForm : Form
 
     private MenuStrip BuildMenu()
     {
-        var menu = new MenuStrip();
+        var menu = new MenuStrip { RenderMode = ToolStripRenderMode.System };
 
+        // ---------------- File
         var file = new ToolStripMenuItem("&File");
         file.DropDownItems.Add(Mi("Nuovo", Keys.Control | Keys.N, (s, e) => { if (ConfirmDiscard()) NewDocument(); }));
         file.DropDownItems.Add(Mi("Apri...", Keys.Control | Keys.O, (s, e) => OpenDialog()));
+        file.DropDownItems.Add(Mi("Importa da Word, RTF o testo...", Keys.None, (s, e) => ImportDialog()));
         file.DropDownItems.Add(new ToolStripSeparator());
         file.DropDownItems.Add(Mi("Salva", Keys.Control | Keys.S, (s, e) => Save()));
         file.DropDownItems.Add(Mi("Salva con nome...", Keys.Control | Keys.Shift | Keys.S, (s, e) => SaveAs()));
@@ -123,6 +136,9 @@ public sealed class MainForm : Form
 
         var export = new ToolStripMenuItem("Esporta");
         export.DropDownItems.Add(Mi("PDF...", Keys.Control | Keys.P, (s, e) => ExportPdf()));
+        export.DropDownItems.Add(Mi("Sides per personaggio...", Keys.None, (s, e) => ExportSides()));
+        export.DropDownItems.Add(Mi("Report statistiche (PDF)...", Keys.None, (s, e) => ExportReport()));
+        export.DropDownItems.Add(new ToolStripSeparator());
         export.DropDownItems.Add(Mi("Fountain (.fountain)...", Keys.None, (s, e) => ExportAs(DocFormat.Fountain)));
         export.DropDownItems.Add(Mi("Final Draft (.fdx)...", Keys.None, (s, e) => ExportAs(DocFormat.Fdx)));
         file.DropDownItems.Add(export);
@@ -130,17 +146,19 @@ public sealed class MainForm : Form
         file.DropDownItems.Add(Mi("Esci", Keys.None, (s, e) => Close()));
         menu.Items.Add(file);
 
+        // ---------------- Modifica
         var edit = new ToolStripMenuItem("&Modifica");
         edit.DropDownItems.Add(Mi("Annulla", Keys.Control | Keys.Z, (s, e) => _editor.Undo()));
         edit.DropDownItems.Add(Mi("Ripristina", Keys.Control | Keys.Y, (s, e) => _editor.Redo()));
         edit.DropDownItems.Add(new ToolStripSeparator());
         edit.DropDownItems.Add(Mi("Taglia", Keys.Control | Keys.X, (s, e) => _editor.Cut()));
         edit.DropDownItems.Add(Mi("Copia", Keys.Control | Keys.C, (s, e) => _editor.Copy()));
-        edit.DropDownItems.Add(Mi("Incolla", Keys.Control | Keys.V, (s, e) => _editor.Paste()));
+        edit.DropDownItems.Add(Mi("Incolla", Keys.Control | Keys.V, (s, e) => _editor.PasteFromClipboard()));
         edit.DropDownItems.Add(new ToolStripSeparator());
         edit.DropDownItems.Add(Mi("Trova e sostituisci...", Keys.Control | Keys.F, (s, e) => ShowFind()));
         menu.Items.Add(edit);
 
+        // ---------------- Formato
         var format = new ToolStripMenuItem("&Formato");
         int n = 1;
         foreach (var st in ElementStyle.All)
@@ -150,10 +168,22 @@ public sealed class MainForm : Form
                 (s, e) => { _editor.ApplyType(type); _editor.Focus(); }));
             n++;
         }
+        format.DropDownItems.Add(new ToolStripSeparator());
+        format.DropDownItems.Add(Mi("Dialogo simultaneo", Keys.Control | Keys.D,
+            (s, e) => { _editor.ToggleDual(); _editor.Focus(); }));
+
+        var ext = new ToolStripMenuItem("Estensione personaggio");
+        foreach (var x in ScreenplayEditor.CharacterExtensions)
+        {
+            var captured = x;
+            ext.DropDownItems.Add(Mi(x, Keys.None, (s, e) => { _editor.AppendCharacterExtension(captured); _editor.Focus(); }));
+        }
+        format.DropDownItems.Add(ext);
         menu.Items.Add(format);
 
+        // ---------------- Vista
         var view = new ToolStripMenuItem("&Vista");
-        var navItem = Mi("Pannello scene", Keys.F9, null);
+        var navItem = Mi("Pannello laterale", Keys.F9, null);
         navItem.CheckOnClick = true;
         navItem.Checked = _settings.ShowNavigator;
         navItem.CheckedChanged += (s, e) =>
@@ -162,50 +192,58 @@ public sealed class MainForm : Form
             _split.Panel1Collapsed = !navItem.Checked;
         };
         view.DropDownItems.Add(navItem);
+        view.DropDownItems.Add(Mi("Schede scena...", Keys.F6, (s, e) => ShowCards()));
+        view.DropDownItems.Add(new ToolStripSeparator());
+
+        _typewriterItem = Mi("Macchina da scrivere", Keys.F11, null);
+        _typewriterItem.CheckOnClick = true;
+        _typewriterItem.Checked = _settings.Typewriter;
+        _typewriterItem.CheckedChanged += (s, e) =>
+        {
+            _settings.Typewriter = _typewriterItem.Checked;
+            _editor.TypewriterMode = _typewriterItem.Checked;
+        };
+        view.DropDownItems.Add(_typewriterItem);
+        view.DropDownItems.Add(Mi("Aspetto (carattere e tema)...", Keys.None, (s, e) => ShowAppearance()));
         view.DropDownItems.Add(new ToolStripSeparator());
         view.DropDownItems.Add(Mi("Ingrandisci", Keys.Control | Keys.Oemplus, (s, e) => Zoom(0.1f)));
         view.DropDownItems.Add(Mi("Riduci", Keys.Control | Keys.OemMinus, (s, e) => Zoom(-0.1f)));
         view.DropDownItems.Add(Mi("Zoom 100%", Keys.Control | Keys.D0, (s, e) => SetZoom(1f)));
         menu.Items.Add(view);
 
+        // ---------------- Strumenti
         var tools = new ToolStripMenuItem("&Strumenti");
         tools.DropDownItems.Add(Mi("Frontespizio...", Keys.F7, (s, e) => EditTitlePage()));
         tools.DropDownItems.Add(Mi("Statistiche...", Keys.F8, (s, e) => ShowReport()));
         tools.DropDownItems.Add(new ToolStripSeparator());
+        tools.DropDownItems.Add(Mi("Nota sull'elemento...", Keys.Control | Keys.M, (s, e) => EditNote()));
 
-        var paper = new ToolStripMenuItem("Formato carta");
-        var a4 = Mi("A4", Keys.None, (s, e) => { _settings.Paper = "A4"; UpdatePaperChecks(paper); MarkStats(); });
-        var letter = Mi("Letter", Keys.None, (s, e) => { _settings.Paper = "Letter"; UpdatePaperChecks(paper); MarkStats(); });
-        paper.DropDownItems.Add(a4);
-        paper.DropDownItems.Add(letter);
-        tools.DropDownItems.Add(paper);
-        UpdatePaperChecks(paper);
+        var numbers = new ToolStripMenuItem("Numeri di scena");
+        numbers.DropDownItems.Add(Mi("Blocca la numerazione", Keys.None, (s, e) => LockSceneNumbers(true)));
+        numbers.DropDownItems.Add(Mi("Sblocca (torna a 1, 2, 3...)", Keys.None, (s, e) => LockSceneNumbers(false)));
+        tools.DropDownItems.Add(numbers);
 
-        var sceneNo = Mi("Numeri di scena nel PDF", Keys.None, null);
-        sceneNo.CheckOnClick = true;
-        sceneNo.Checked = _settings.SceneNumbers;
-        sceneNo.CheckedChanged += (s, e) => _settings.SceneNumbers = sceneNo.Checked;
-        tools.DropDownItems.Add(sceneNo);
-
-        var tpInPdf = Mi("Frontespizio nel PDF", Keys.None, null);
-        tpInPdf.CheckOnClick = true;
-        tpInPdf.Checked = _settings.IncludeTitlePage;
-        tpInPdf.CheckedChanged += (s, e) => _settings.IncludeTitlePage = tpInPdf.Checked;
-        tools.DropDownItems.Add(tpInPdf);
+        tools.DropDownItems.Add(Mi("Revisione...", Keys.None, (s, e) => ShowRevision()));
         menu.Items.Add(tools);
 
+        // ---------------- Aiuto
         var help = new ToolStripMenuItem("&?");
         help.DropDownItems.Add(Mi("Scorciatoie da tastiera", Keys.F1, (s, e) => ShowShortcuts()));
+        help.DropDownItems.Add(new ToolStripSeparator());
+        help.DropDownItems.Add(Mi("Cerca aggiornamenti...", Keys.None,
+            (s, e) => UpdateChecker.CheckInBackground(this, _settings, true)));
+
+        var autoUpdate = Mi("Controlla all'avvio", Keys.None, null);
+        autoUpdate.CheckOnClick = true;
+        autoUpdate.Checked = _settings.CheckUpdates;
+        autoUpdate.CheckedChanged += (s, e) => { _settings.CheckUpdates = autoUpdate.Checked; _settings.Save(); };
+        help.DropDownItems.Add(autoUpdate);
+
+        help.DropDownItems.Add(new ToolStripSeparator());
         help.DropDownItems.Add(Mi("Informazioni su DraftLite", Keys.None, (s, e) => ShowAbout()));
         menu.Items.Add(help);
 
         return menu;
-    }
-
-    private void UpdatePaperChecks(ToolStripMenuItem paper)
-    {
-        foreach (ToolStripMenuItem it in paper.DropDownItems.OfType<ToolStripMenuItem>())
-            it.Checked = it.Text == _settings.Paper;
     }
 
     private ToolStrip BuildToolbar()
@@ -231,6 +269,8 @@ public sealed class MainForm : Form
             tool.Items.Add(b);
         }
 
+        Btn("Schede", "Bacheca delle scene (F6)", (s, e) => ShowCards());
+        Btn("Nota", "Nota sull'elemento corrente (Ctrl+M)", (s, e) => EditNote());
         Btn("Frontespizio", "Titolo, autore, contatti (F7)", (s, e) => EditTitlePage());
         Btn("Statistiche", "Pagine, scene, battute (F8)", (s, e) => ShowReport());
         tool.Items.Add(new ToolStripSeparator());
@@ -243,7 +283,7 @@ public sealed class MainForm : Form
     {
         _editor.TextChanged += (s, e) => { if (!_loading) { SetDirty(true); MarkStats(); } };
         _editor.CurrentTypeChanged += (s, e) => UpdateStatus();
-        _editor.DocumentIndexed += (s, e) => RefreshScenes();
+        _editor.DocumentIndexed += (s, e) => { RefreshScenes(); RefreshNotes(); };
 
         _pageHost.Resize += (s, e) => LayoutPage();
         _pageHost.MouseDown += (s, e) => _editor.Focus();
@@ -261,8 +301,27 @@ public sealed class MainForm : Form
         };
         _sceneList.MouseDown += SceneList_MouseDown;
         _sceneList.MouseMove += SceneList_MouseMove;
-        _sceneList.DragOver += (s, e) => e.Effect = DragDropEffects.Move;
+        _sceneList.MouseUp += (s, e) => _dragIndex = -1;
+        _sceneList.DragOver += (s, e) =>
+            e.Effect = e.Data.GetDataPresent(typeof(int)) ? DragDropEffects.Move : DragDropEffects.None;
+        _sceneList.DragLeave += (s, e) => _dragIndex = -1;
         _sceneList.DragDrop += SceneList_DragDrop;
+
+        _noteList.SelectedIndexChanged += (s, e) =>
+        {
+            if (_loading) return;
+            int i = _noteList.SelectedIndex;
+            if (i >= 0 && i < _notes.Count) _editor.GoToCharIndex(_notes[i].CharIndex, false);
+        };
+        _noteList.DoubleClick += (s, e) =>
+        {
+            int i = _noteList.SelectedIndex;
+            if (i >= 0 && i < _notes.Count)
+            {
+                _editor.GoToCharIndex(_notes[i].CharIndex, true);
+                EditNote();
+            }
+        };
 
         _statsTimer.Tick += (s, e) => { _statsTimer.Stop(); RefreshStats(); };
         _autoSaveTimer.Tick += (s, e) => AutoSave();
@@ -285,10 +344,21 @@ public sealed class MainForm : Form
 
         Shown += (s, e) =>
         {
-            try { _split.SplitterDistance = 250; } catch { }
+            try { _split.SplitterDistance = 260; } catch { }
             LayoutPage();
             _editor.ApplyPageWidth();
             _editor.Focus();
+
+            // il controllo aggiornamenti parte staccato dall'avvio: se la rete
+            // non c'e' o GitHub non risponde, l'applicazione non se ne accorge
+            var delay = new System.Windows.Forms.Timer { Interval = 3000 };
+            delay.Tick += (s2, e2) =>
+            {
+                delay.Stop();
+                delay.Dispose();
+                UpdateChecker.CheckInBackground(this, _settings, false);
+            };
+            delay.Start();
         };
     }
 
@@ -308,6 +378,24 @@ public sealed class MainForm : Form
         LayoutPage();
     }
 
+    private void ApplyAppearance()
+    {
+        _theme = Theme.ByName(_settings.ThemeName);
+        _theme.ApplyTo(this);
+        BackColor = _theme.Panel;
+        _pageHost.BackColor = _theme.Desk;
+        _page.BackColor = _theme.Paper;
+        _sceneList.BackColor = _theme.Panel;
+        _sceneList.ForeColor = _theme.PanelText;
+        _noteList.BackColor = _theme.Panel;
+        _noteList.ForeColor = _theme.PanelText;
+
+        _editor.SetColors(_theme.Paper, _theme.Ink, _theme.NoteBack);
+        _editor.SetEditorFont(_settings.FontFamily);
+        _editor.TypewriterMode = _settings.Typewriter;
+        LayoutPage();
+    }
+
     // ------------------------------------------------------------------ DOCUMENTO
 
     private void NewDocument()
@@ -316,6 +404,7 @@ public sealed class MainForm : Form
         try
         {
             _titlePage = new TitlePage();
+            _revision = new Revision();
             _editor.SetElements(new List<ScreenElement>
             {
                 new ScreenElement(ElementType.SceneHeading, string.Empty)
@@ -327,6 +416,7 @@ public sealed class MainForm : Form
 
         SetDirty(false);
         RefreshScenes();
+        RefreshNotes();
         MarkStats();
         UpdateStatus();
         _editor.Focus();
@@ -335,19 +425,55 @@ public sealed class MainForm : Form
     private Screenplay CurrentScreenplay() => new Screenplay
     {
         TitlePage = _titlePage,
+        Revision = _revision,
         Elements = _editor.GetElements()
     };
+
+    private void LoadScreenplay(Screenplay sp, string path, DocFormat format)
+    {
+        _loading = true;
+        try
+        {
+            _titlePage = sp.TitlePage ?? new TitlePage();
+            _revision = sp.Revision ?? new Revision();
+            _editor.SetElements(sp.Elements.Count > 0
+                ? sp.Elements
+                : new List<ScreenElement> { new ScreenElement(ElementType.SceneHeading, string.Empty) });
+            _path = path;
+            _format = format;
+        }
+        finally { _loading = false; }
+
+        SetDirty(path == null);
+        RefreshScenes();
+        RefreshNotes();
+        MarkStats();
+        UpdateStatus();
+    }
 
     private void OpenDialog()
     {
         if (!ConfirmDiscard()) return;
         using var dlg = new OpenFileDialog
         {
-            Filter = "Tutti i formati (*.dlite;*.fountain;*.spmd;*.fdx;*.txt)|*.dlite;*.fountain;*.spmd;*.fdx;*.txt|" +
+            Filter = "Tutti i formati (*.dlite;*.fountain;*.spmd;*.fdx;*.fdxt;*.txt;*.docx;*.rtf)|" +
+                     "*.dlite;*.fountain;*.spmd;*.fdx;*.fdxt;*.txt;*.docx;*.rtf|" +
                      "DraftLite (*.dlite)|*.dlite|" +
                      "Fountain (*.fountain;*.spmd;*.txt)|*.fountain;*.spmd;*.txt|" +
-                     "Final Draft (*.fdx)|*.fdx|" +
+                     "Final Draft (*.fdx;*.fdxt)|*.fdx;*.fdxt|" +
+                     "Word e RTF (*.docx;*.rtf)|*.docx;*.rtf|" +
                      "Tutti i file (*.*)|*.*",
+            InitialDirectory = Directory.Exists(_settings.LastFolder) ? _settings.LastFolder : null
+        };
+        if (dlg.ShowDialog(this) == DialogResult.OK) OpenFile(dlg.FileName);
+    }
+
+    private void ImportDialog()
+    {
+        if (!ConfirmDiscard()) return;
+        using var dlg = new OpenFileDialog
+        {
+            Filter = "Word, RTF e testo (*.docx;*.rtf;*.txt)|*.docx;*.rtf;*.txt|Tutti i file (*.*)|*.*",
             InitialDirectory = Directory.Exists(_settings.LastFolder) ? _settings.LastFolder : null
         };
         if (dlg.ShowDialog(this) == DialogResult.OK) OpenFile(dlg.FileName);
@@ -359,31 +485,45 @@ public sealed class MainForm : Form
         {
             var ext = Path.GetExtension(path).ToLowerInvariant();
             Screenplay sp;
+            DocFormat format;
+            string keepPath = path;
+
             switch (ext)
             {
-                case ".fdx": sp = FdxIO.Load(path); _format = DocFormat.Fdx; break;
+                case ".fdx":
+                case ".fdxt":
+                    sp = FdxIO.Load(path);
+                    format = DocFormat.Fdx;
+                    break;
                 case ".fountain":
                 case ".spmd":
-                case ".txt": sp = FountainIO.Load(path); _format = DocFormat.Fountain; break;
-                default: sp = DraftLiteFile.Load(path); _format = DocFormat.DraftLite; break;
+                    sp = FountainIO.Load(path);
+                    format = DocFormat.Fountain;
+                    break;
+                case ".docx":
+                case ".rtf":
+                    sp = TextImporter.Load(path);
+                    format = DocFormat.DraftLite;
+                    keepPath = null;              // importato: si salva come .dlite
+                    break;
+                case ".txt":
+                    sp = TextImporter.Load(path);
+                    format = DocFormat.DraftLite;
+                    keepPath = null;
+                    break;
+                default:
+                    sp = DraftLiteFile.Load(path);
+                    format = DocFormat.DraftLite;
+                    break;
             }
-
-            _loading = true;
-            try
-            {
-                _titlePage = sp.TitlePage;
-                _editor.SetElements(sp.Elements.Count > 0
-                    ? sp.Elements
-                    : new List<ScreenElement> { new ScreenElement(ElementType.SceneHeading, string.Empty) });
-                _path = path;
-            }
-            finally { _loading = false; }
 
             _settings.LastFolder = Path.GetDirectoryName(path) ?? string.Empty;
-            SetDirty(false);
-            RefreshScenes();
-            MarkStats();
-            UpdateStatus();
+            LoadScreenplay(sp, keepPath, format);
+
+            if (keepPath == null)
+                MessageBox.Show(this,
+                    "Documento importato.\n\nControlla che gli elementi siano quelli giusti, poi salvalo come .dlite.",
+                    "DraftLite", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
         catch (Exception ex)
         {
@@ -397,6 +537,8 @@ public sealed class MainForm : Form
         if (string.IsNullOrEmpty(_path)) return SaveAs();
         try
         {
+            _settings.MakeBackup(_path);
+
             var sp = CurrentScreenplay();
             switch (_format)
             {
@@ -434,6 +576,12 @@ public sealed class MainForm : Form
             _ => DocFormat.DraftLite
         };
         _settings.LastFolder = Path.GetDirectoryName(_path) ?? string.Empty;
+
+        if (_format != DocFormat.DraftLite)
+            MessageBox.Show(this,
+                "Nota: colori delle schede e stato della revisione si conservano solo nel formato .dlite.",
+                "DraftLite", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
         return Save();
     }
 
@@ -462,6 +610,10 @@ public sealed class MainForm : Form
 
     private void ExportPdf()
     {
+        using var opt = new PdfOptionsForm(_settings.ToPageSetup());
+        if (opt.ShowDialog(this) != DialogResult.OK || opt.Setup == null) return;
+        _settings.FromPageSetup(opt.Setup);
+
         using var dlg = new SaveFileDialog
         {
             Filter = "PDF (*.pdf)|*.pdf",
@@ -472,16 +624,8 @@ public sealed class MainForm : Form
 
         try
         {
-            PdfExporter.Export(dlg.FileName, CurrentScreenplay(), _settings.ToPageSetup());
-            if (MessageBox.Show(this, "PDF creato.\n\nAprirlo adesso?", "DraftLite",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = dlg.FileName,
-                    UseShellExecute = true
-                });
-            }
+            PdfExporter.Export(dlg.FileName, CurrentScreenplay(), opt.Setup);
+            OfferOpen(dlg.FileName, "PDF creato.");
         }
         catch (Exception ex)
         {
@@ -490,13 +634,89 @@ public sealed class MainForm : Form
         }
     }
 
+    private void ExportSides()
+    {
+        var sp = CurrentScreenplay();
+        var characters = sp.CharacterNames();
+        if (characters.Count == 0)
+        {
+            MessageBox.Show(this, "Nel copione non c'e' ancora nessun personaggio.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var pick = new SidesForm(characters);
+        if (pick.ShowDialog(this) != DialogResult.OK || string.IsNullOrWhiteSpace(pick.Character)) return;
+
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "PDF (*.pdf)|*.pdf",
+            FileName = SafeFileName("sides - " + pick.Character) + ".pdf",
+            InitialDirectory = Directory.Exists(_settings.LastFolder) ? _settings.LastFolder : null
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            PdfExporter.ExportSides(dlg.FileName, sp, pick.Character, _settings.ToPageSetup());
+            OfferOpen(dlg.FileName, "Sides di " + pick.Character + " creati.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Export non riuscito:\n\n" + ex.Message, "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void ExportReport()
+    {
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "PDF (*.pdf)|*.pdf",
+            FileName = SafeFileName("statistiche") + ".pdf",
+            InitialDirectory = Directory.Exists(_settings.LastFolder) ? _settings.LastFolder : null
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            PdfExporter.ExportReport(dlg.FileName, CurrentScreenplay(), _settings.ToPageSetup());
+            OfferOpen(dlg.FileName, "Report creato.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Export non riuscito:\n\n" + ex.Message, "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void OfferOpen(string path, string message)
+    {
+        if (MessageBox.Show(this, message + "\n\nAprirlo adesso?", "DraftLite",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+        catch { }
+    }
+
+    private static string SafeFileName(string s)
+    {
+        foreach (var c in Path.GetInvalidFileNameChars()) s = s.Replace(c, '-');
+        return s.Trim();
+    }
+
     private string SuggestedFileName()
     {
         if (!string.IsNullOrEmpty(_path)) return Path.GetFileName(_path);
         var t = _titlePage.Title;
         if (string.IsNullOrWhiteSpace(t)) return "senza titolo.dlite";
-        foreach (var c in Path.GetInvalidFileNameChars()) t = t.Replace(c, '-');
-        return t.Trim() + ".dlite";
+        return SafeFileName(t) + ".dlite";
     }
 
     private bool ConfirmDiscard()
@@ -513,7 +733,8 @@ public sealed class MainForm : Form
     {
         _dirty = dirty;
         var name = string.IsNullOrEmpty(_path) ? "senza titolo" : Path.GetFileName(_path);
-        Text = "DraftLite - " + name + (dirty ? " *" : "");
+        var rev = _revision != null && _revision.Active ? "  [bozza " + _revision.Color + "]" : "";
+        Text = "DraftLite - " + name + (dirty ? " *" : "") + rev;
     }
 
     // ------------------------------------------------------------------ AUTOSALVATAGGIO
@@ -542,8 +763,8 @@ public sealed class MainForm : Form
                 ".\n\nRecuperarlo?", "DraftLite", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             if (r == DialogResult.Yes)
             {
-                OpenFile(AppSettings.AutoSavePath);
-                _path = null;
+                var sp = DraftLiteFile.Load(AppSettings.AutoSavePath);
+                LoadScreenplay(sp, null, DocFormat.DraftLite);
                 SetDirty(true);
             }
             else TryDeleteAutoSave();
@@ -551,12 +772,11 @@ public sealed class MainForm : Form
         catch { }
     }
 
-    // ------------------------------------------------------------------ SCENE
+    // ------------------------------------------------------------------ PANNELLI
 
     private void RefreshScenes()
     {
-        var scenes = _editor.GetSceneIndex();
-        _scenes = scenes;
+        _scenes = _editor.GetSceneIndex();
 
         bool savedLoading = _loading;
         _loading = true;
@@ -565,7 +785,7 @@ public sealed class MainForm : Form
             int sel = _sceneList.SelectedIndex;
             _sceneList.BeginUpdate();
             _sceneList.Items.Clear();
-            foreach (var s in scenes)
+            foreach (var s in _scenes)
                 _sceneList.Items.Add(s.Number + ".  " + s.Text);
             _sceneList.EndUpdate();
             if (sel >= 0 && sel < _sceneList.Items.Count) _sceneList.SelectedIndex = sel;
@@ -573,6 +793,28 @@ public sealed class MainForm : Form
         finally { _loading = savedLoading; }
 
         UpdateStatus();
+    }
+
+    private void RefreshNotes()
+    {
+        _notes = _editor.GetNotes();
+
+        bool savedLoading = _loading;
+        _loading = true;
+        try
+        {
+            _noteList.BeginUpdate();
+            _noteList.Items.Clear();
+            foreach (var n in _notes)
+            {
+                var head = string.IsNullOrWhiteSpace(n.Text) ? "(riga vuota)" : Truncate(n.Text, 28);
+                _noteList.Items.Add(head + "  -  " + Truncate(n.Note.Replace("\n", " "), 40));
+            }
+            _noteList.EndUpdate();
+        }
+        finally { _loading = savedLoading; }
+
+        _sideTabs.TabPages[1].Text = _notes.Count > 0 ? "Note (" + _notes.Count + ")" : "Note";
     }
 
     private Point _dragStart;
@@ -593,33 +835,36 @@ public sealed class MainForm : Form
 
     private void SceneList_DragDrop(object sender, DragEventArgs e)
     {
-        if (_dragIndex < 0) return;
-        var pt = _sceneList.PointToClient(new Point(e.X, e.Y));
-        int target = _sceneList.IndexFromPoint(pt);
-        if (target < 0) target = _sceneList.Items.Count - 1;
-        if (target == _dragIndex) return;
+        try
+        {
+            if (!e.Data.GetDataPresent(typeof(int))) return;
+            int from = (int)e.Data.GetData(typeof(int));
+            if (from < 0 || from >= _scenes.Count) return;
 
-        MoveScene(_dragIndex, target);
-        _dragIndex = -1;
+            var pt = _sceneList.PointToClient(new Point(e.X, e.Y));
+            int target = _sceneList.IndexFromPoint(pt);
+            if (target < 0) target = _sceneList.Items.Count - 1;
+            if (target == from) return;
+
+            MoveScene(from, target);
+        }
+        finally { _dragIndex = -1; }
     }
 
-    /// <summary>Sposta un'intera scena (intestazione + contenuto) in un'altra posizione.</summary>
-    private void MoveScene(int from, int to)
+    /// <summary>Divide il copione in blocchi: quello che sta prima della prima scena, poi una scena per blocco.</summary>
+    private static List<List<ScreenElement>> SplitScenes(List<ScreenElement> els, out List<ScreenElement> head)
     {
-        var els = _editor.GetElements();
         var starts = new List<int>();
         for (int i = 0; i < els.Count; i++)
         {
-            // stesso criterio del pannello scene: altrimenti gli indici si disallineano
             var txt = els[i].Text.Trim();
             if (els[i].Type == ElementType.SceneHeading && txt.Length > 0 &&
-                txt.Length <= 70 && txt == txt.ToUpperInvariant())
+                txt.Length <= 120 && txt == txt.ToUpperInvariant())
                 starts.Add(i);
         }
 
-        if (from < 0 || from >= starts.Count || to < 0 || to >= starts.Count) return;
+        head = starts.Count > 0 ? els.Take(starts[0]).ToList() : new List<ScreenElement>(els);
 
-        var head = els.Take(starts[0]).ToList();
         var blocks = new List<List<ScreenElement>>();
         for (int k = 0; k < starts.Count; k++)
         {
@@ -627,6 +872,14 @@ public sealed class MainForm : Form
             int e = (k + 1 < starts.Count) ? starts[k + 1] : els.Count;
             blocks.Add(els.GetRange(s, e - s));
         }
+        return blocks;
+    }
+
+    private void MoveScene(int from, int to)
+    {
+        var els = _editor.GetElements();
+        var blocks = SplitScenes(els, out var head);
+        if (from < 0 || from >= blocks.Count || to < 0 || to >= blocks.Count) return;
 
         var moved = blocks[from];
         blocks.RemoveAt(from);
@@ -638,8 +891,9 @@ public sealed class MainForm : Form
         _editor.SetElements(result, false);
         SetDirty(true);
         RefreshScenes();
+        RefreshNotes();
         MarkStats();
-        if (to >= 0 && to < _scenes.Count) _editor.GoToCharIndex(_scenes[to].CharIndex);
+        if (to >= 0 && to < _scenes.Count) _editor.GoToCharIndex(_scenes[to].CharIndex, false);
     }
 
     // ------------------------------------------------------------------ STATO
@@ -667,7 +921,8 @@ public sealed class MainForm : Form
     private void UpdateStatus()
     {
         var type = _editor.CurrentType;
-        _lblType.Text = "  " + ElementStyle.NameOf(type);
+        _lblType.Text = "  " + ElementStyle.NameOf(type) +
+                        (_editor.IsDualAtCaret ? "  (simultaneo)" : "");
 
         bool savedLoading = _loading;
         _loading = true;
@@ -688,7 +943,7 @@ public sealed class MainForm : Form
     private static string Truncate(string s, int n)
         => string.IsNullOrEmpty(s) || s.Length <= n ? s : s.Substring(0, n - 1) + "...";
 
-    // ------------------------------------------------------------------ DIALOGHI
+    // ------------------------------------------------------------------ FUNZIONI
 
     private void EditTitlePage()
     {
@@ -717,23 +972,150 @@ public sealed class MainForm : Form
         _findForm.BringToFront();
     }
 
+    private void EditNote()
+    {
+        var context = _editor.CurrentParagraphText;
+        using var dlg = new NoteForm(_editor.NoteAtCaret, context);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _editor.SetNoteAtCaret(dlg.Deleted ? null : dlg.Note);
+        RefreshNotes();
+        SetDirty(true);
+        _editor.Focus();
+    }
+
+    private void ShowAppearance()
+    {
+        using var dlg = new AppearanceForm(_settings.FontFamily, _settings.ThemeName, _settings.Typewriter);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _settings.FontFamily = dlg.SelectedFont;
+        _settings.ThemeName = dlg.SelectedTheme;
+        _settings.Typewriter = dlg.Typewriter;
+        if (_typewriterItem != null) _typewriterItem.Checked = dlg.Typewriter;
+        ApplyAppearance();
+        _settings.Save();
+    }
+
+    private void ShowCards()
+    {
+        var els = _editor.GetElements();
+        var blocks = SplitScenes(els, out _);
+        // la numerazione si calcola sugli stessi blocchi che finiscono in bacheca,
+        // altrimenti le etichette possono scivolare di una scena
+        var numbers = new Screenplay { Elements = blocks.Select(b => b[0]).ToList() }.SceneNumbers();
+
+        var cards = new List<CardsForm.CardData>();
+        for (int i = 0; i < blocks.Count; i++)
+        {
+            var headEl = blocks[i][0];
+            cards.Add(new CardsForm.CardData
+            {
+                SceneIndex = i,
+                Number = i < numbers.Count ? numbers[i] : (i + 1).ToString(),
+                Heading = headEl.Text,
+                Synopsis = headEl.Synopsis ?? string.Empty,
+                Color = headEl.Color
+            });
+        }
+
+        if (cards.Count == 0)
+        {
+            MessageBox.Show(this, "Non ci sono ancora scene da mostrare.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new CardsForm(cards, _theme);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        if (dlg.GoToScene >= 0)
+        {
+            RefreshScenes();
+            if (dlg.GoToScene < _scenes.Count) _editor.GoToCharIndex(_scenes[dlg.GoToScene].CharIndex, true);
+            return;
+        }
+
+        if (dlg.Result == null) return;
+
+        var head = new List<ScreenElement>();
+        SplitScenes(els, out head);
+        var result = new List<ScreenElement>(head);
+        foreach (var card in dlg.Result)
+        {
+            if (card.SceneIndex < 0 || card.SceneIndex >= blocks.Count) continue;
+            var block = blocks[card.SceneIndex];
+            block[0].Synopsis = string.IsNullOrWhiteSpace(card.Synopsis) ? null : card.Synopsis.Trim();
+            block[0].Color = card.Color;
+            result.AddRange(block);
+        }
+
+        _editor.SetElements(result, false);
+        SetDirty(true);
+        RefreshScenes();
+        RefreshNotes();
+        MarkStats();
+        _editor.Focus();
+    }
+
+    private void LockSceneNumbers(bool locked)
+    {
+        var sp = CurrentScreenplay();
+        if (locked) sp.LockSceneNumbers();
+        else sp.UnlockSceneNumbers();
+
+        _editor.SetElements(sp.Elements, false);
+        SetDirty(true);
+        RefreshScenes();
+        RefreshNotes();
+
+        _settings.SceneNumbers = locked || _settings.SceneNumbers;
+        MessageBox.Show(this,
+            locked
+                ? "Numerazione bloccata: le scene inserite d'ora in poi prendono le lettere (12A, 12B...)."
+                : "Numerazione libera: le scene tornano a 1, 2, 3...",
+            "DraftLite", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void ShowRevision()
+    {
+        var sp = CurrentScreenplay();
+        int changed = sp.Revision.MarkChanged(sp.Compacted()).Count(x => x);
+
+        using var dlg = new RevisionForm(_revision, changed);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        _revision.Color = dlg.ColorName;
+        _revision.Date = dlg.RevisionDate;
+        _revision.Active = dlg.Active;
+
+        if (dlg.FreezeRequested)
+            _revision.Snapshot = Revision.TakeSnapshot(CurrentScreenplay().Compacted());
+
+        SetDirty(true);
+        MarkStats();
+    }
+
     private void ShowShortcuts()
     {
         MessageBox.Show(this,
             "SCRITTURA\r\n" +
             "  Invio           elemento successivo (Scena > Azione, Personaggio > Dialogo...)\r\n" +
+            "  Shift+Invio     stesso elemento, riga nuova\r\n" +
             "  Tab             cambia tipo dell'elemento corrente\r\n" +
             "  Shift+Tab       tipo precedente\r\n" +
-            "  Tab su nome     apre la parentetica\r\n" +
+            "  Tab su un nome  apre la parentetica\r\n" +
             "  Invio su riga vuota   torna ad Azione\r\n\r\n" +
             "TIPI DI ELEMENTO\r\n" +
-            "  Ctrl+1 Scena      Ctrl+2 Azione      Ctrl+3 Personaggio\r\n" +
-            "  Ctrl+4 Parentetica  Ctrl+5 Dialogo   Ctrl+6 Transizione\r\n\r\n" +
+            "  Ctrl+1 Scena      Ctrl+2 Azione       Ctrl+3 Personaggio\r\n" +
+            "  Ctrl+4 Parentetica  Ctrl+5 Dialogo    Ctrl+6 Transizione\r\n" +
+            "  Ctrl+D  dialogo simultaneo (due colonne nel PDF)\r\n\r\n" +
             "FILE\r\n" +
             "  Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF\r\n\r\n" +
             "ALTRO\r\n" +
-            "  F7 frontespizio   F8 statistiche   F9 pannello scene\r\n" +
-            "  Ctrl+F trova      Ctrl+ +/- zoom\r\n\r\n" +
+            "  F6 schede scena   F7 frontespizio   F8 statistiche\r\n" +
+            "  F9 pannello laterale   F11 macchina da scrivere\r\n" +
+            "  Ctrl+M nota sull'elemento   Ctrl+F trova   Ctrl+ +/- zoom\r\n\r\n" +
             "SUGGERIMENTI\r\n" +
             "  Scrivendo INT. o EST. in un'azione, la riga diventa una scena.\r\n" +
             "  Nei nomi personaggio e nelle scene compare l'elenco di quelli gia' usati:\r\n" +
@@ -747,7 +1129,9 @@ public sealed class MainForm : Form
         MessageBox.Show(this,
             "DraftLite " + (v != null ? v.ToString(3) : "1.0") + "\r\n\r\n" +
             "Scrittura di sceneggiature, solo quello che serve.\r\n" +
-            "Formati: .dlite (nativo), Fountain, Final Draft .fdx, PDF.\r\n\r\n" +
+            "Formati: .dlite (nativo), Fountain, Final Draft .fdx, PDF.\r\n" +
+            "Import da Word, RTF e testo.\r\n\r\n" +
+            UpdateChecker.ReleasesUrl + "\r\n\r\n" +
             "Tastiere Digitali srls",
             "Informazioni", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }

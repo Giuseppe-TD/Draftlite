@@ -3,13 +3,13 @@
 Scrittura di sceneggiature per Windows: la parte utile di Final Draft, senza le altre mille.
 
 Un editor che sa cos'è una sceneggiatura — margini, maiuscole, rientri, paginazione — e che
-sta zitto su tutto il resto. Niente revisioni colorate, niente schede indice, niente licenze.
+sta zitto su tutto il resto. Niente licenze, niente abbonamenti, un solo eseguibile.
 
 ![DraftLite](docs/icon.png)
 
 ---
 
-## Cosa fa
+## Scrivere
 
 **Formattazione automatica.** Sei elementi (Scena, Azione, Personaggio, Parentetica, Dialogo,
 Transizione). `Invio` passa all'elemento che viene dopo per logica — dopo il nome del
@@ -20,27 +20,60 @@ maiuscole li mette lui.
 scritte, i momenti della giornata dopo il trattino. Frecce per scegliere, `Invio` o `Tab` per
 confermare, `Esc` per ignorare.
 
-**Pannello scene.** Tutte le scene numerate in colonna: clic per saltarci, trascina per
-spostare l'intera scena (intestazione e contenuto) da un'altra parte del copione.
+**Dialogo simultaneo.** `Ctrl+D` su un nome di personaggio e la sua battuta viene affiancata a
+quella precedente: nel PDF escono su due colonne, come quando due personaggi parlano sopra.
 
-**Frontespizio e statistiche.** Titolo, autore, contatti. E il conto di pagine, durata stimata,
-scene per interni/esterni, battute e parole per personaggio.
+**Note ancorate.** `Ctrl+M` attacca un appunto a una riga: resta agganciato a quella riga anche
+se sopra ne aggiungi o ne togli venti. La riga si evidenzia, e tutte le note stanno insieme nel
+pannello laterale.
+
+**Schede scena.** `F6` apre la bacheca: una scheda per scena, con sinossi e colore. Si
+trascinano per riordinare il copione, doppio clic per saltare alla scena.
+
+**Come ti pare.** Carattere (tra quelli a larghezza fissa), tema chiaro, scuro o seppia,
+modalità macchina da scrivere che tiene la riga corrente a metà schermo (`F11`).
+
+## Produrre
+
+**Revisioni.** Congeli la bozza e da quel momento ogni riga cambiata prende l'asterisco a
+margine, con il colore della bozza stampato in testa alla pagina (Bianca, Blu, Rosa, Gialla...
+nell'ordine standard di produzione).
+
+**Numeri di scena bloccati.** Blocchi la numerazione: le scene inserite dopo diventano 12A, 12B
+e le vecchie non slittano. Nel PDF i numeri escono su entrambi i margini.
+
+**Sides per attore.** Un PDF con le sole scene in cui compare un personaggio, numeri di scena
+originali compresi, da mandargli senza girare tutto il copione.
+
+**Filigrana e copie nominative.** "BOZZA — NON DISTRIBUIRE" in diagonale su ogni pagina, e il
+nome del destinatario in fondo: se la copia gira, si sa da dove è partita.
+
+**Statistiche.** Pagine, durata stimata, scene per interni/esterni e giorno/notte, battute e
+parole per personaggio, elenco scene con la pagina. A video (`F8`) o in PDF stampabile.
 
 **Paginazione vera.** 55 righe per pagina, dialoghi spezzati con `(MORE)` e `(CONT'D)`,
 intestazioni di scena mai lasciate orfane a fondo pagina. Il numero di pagine nella barra di
 stato è quello che esce dal PDF.
 
+**Backup.** A ogni salvataggio la versione precedente finisce in "Versioni DraftLite" accanto al
+file, datata; restano le ultime dieci. Più il salvataggio automatico ogni due minuti.
+
 ## Formati
 
 | Formato | Apri | Salva | Note |
 |---|:--:|:--:|---|
-| `.dlite` | ✔ | ✔ | Nativo. JSON leggibile, ottimo con git |
-| `.fountain` `.spmd` `.txt` | ✔ | ✔ | Standard aperto, testo puro |
-| `.fdx` | ✔ | ✔ | Final Draft |
+| `.dlite` | ✔ | ✔ | Nativo. JSON leggibile, ottimo con git. L'unico che conserva tutto |
+| `.fountain` `.spmd` | ✔ | ✔ | Standard aperto: note, sinossi, numeri di scena e dual dialogue compresi |
+| `.fdx` `.fdxt` | ✔ | ✔ | Final Draft, anche i modelli. Con ScriptNote, SceneProperties e DualDialogue |
+| `.docx` `.rtf` `.txt` | ✔ | — | Import: gli elementi si riconoscono dai rientri, o dalle maiuscole se non ce ne sono |
 | `.pdf` | — | ✔ | Courier 12, formato standard di consegna |
 
 Se apri un `.fountain`, `Ctrl+S` continua a salvare in Fountain: puoi tenere il copione
-versionato in un repo senza pensarci.
+versionato in un repo senza pensarci. Colori delle schede e stato della revisione vivono solo
+nel `.dlite`.
+
+Quando incolli da Word o dal browser, il testo viene riclassificato invece di portarsi dietro i
+rientri altrui — che qui sono l'unica cosa che distingue un dialogo da un'azione.
 
 ## Scorciatoie
 
@@ -51,9 +84,11 @@ Tab              cambia tipo elemento            Ctrl+3   Personaggio
 Shift+Tab        tipo precedente                 Ctrl+4   Parentetica
 Tab su un nome   apre la parentetica             Ctrl+5   Dialogo
 Invio su vuoto   torna ad Azione                 Ctrl+6   Transizione
+                                                 Ctrl+D   dialogo simultaneo
 
 Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF   Ctrl+F trova
-F7 frontespizio   F8 statistiche   F9 pannello scene   Ctrl+ +/- zoom   F1 aiuto
+F6 schede scena   F7 frontespizio   F8 statistiche   F9 pannello laterale
+F11 macchina da scrivere   Ctrl+M nota   Ctrl+ +/- zoom   F1 aiuto
 ```
 
 Scrivendo `INT.` o `EST.` all'inizio di un'azione, la riga diventa da sola un'intestazione di
@@ -62,9 +97,28 @@ allineate a destra.
 
 ## Installazione
 
-Scarica `DraftLite.exe` dall'ultima [release](../../releases) e lancialo. È un eseguibile
-singolo, autocontenuto: non serve installare .NET, non scrive nel registro, non chiede nulla.
-Le preferenze e il salvataggio automatico stanno in `%APPDATA%\DraftLite`.
+Dall'ultima [release](../../releases) scarichi quello che ti serve:
+
+**`DraftLite-Setup-x.y.z.exe`** — installazione normale. Mette il programma in Programmi, il
+collegamento nel menu Start (e sul desktop se lo spunti) e associa i file `.dlite`: doppio clic
+su un copione e si apre, con la sua icona. Durante l'installazione puoi associare anche i
+`.fountain` e — se sai quello che fai — i `.fdx`, che però così li togli a Final Draft. Si
+disinstalla dal Pannello di controllo, e alla disinstallazione ti chiede se buttare via anche le
+preferenze.
+
+**`DraftLite-x.y.z-portabile.exe`** — un file solo, ci clicchi sopra e scrive. Niente
+installazione, niente registro: buono per la chiavetta o per provarlo senza impegno.
+
+In tutti e due i casi serve Windows 10 o successivo a 64 bit, e **non serve installare .NET**:
+è già dentro l'eseguibile. Preferenze e salvataggio automatico stanno in `%APPDATA%\DraftLite`,
+quindi passando dal portabile all'installato ritrovi tutto.
+
+### Aggiornamenti
+
+All'avvio (una volta al giorno, non a ogni apertura) DraftLite chiede a GitHub se c'è una
+versione nuova, e parla solo se c'è: niente download automatici, niente dati inviati, e se la
+rete non c'è non te ne accorgi nemmeno. Lo spegni dal menù `?` › *Controlla all'avvio*, e da lì
+puoi anche cercare gli aggiornamenti a mano quando ti va.
 
 ## Compilare
 
@@ -79,29 +133,46 @@ dotnet publish src/DraftLite/DraftLite.csproj -c Release -r win-x64 --self-conta
 
 Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Linux o macOS.
 
-La build ufficiale la fa GitHub Actions: ogni push su `main` produce l'artifact, un tag `v*`
-pubblica la release.
+L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
+
+```powershell
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.2.0 installer\DraftLite.iss
+# esce in installer\Output\DraftLite-Setup-1.2.0.exe
+```
+
+La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
+portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner viene installato
+dal workflow.
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.2.0 && git push origin v1.2.0
 ```
 
 ## Come è fatto
 
-C# 12 / .NET 8, WinForms, nessuna dipendenza NuGet — nemmeno per il PDF, che è generato a
-mano con i font Courier standard del formato.
+C# 12 / .NET 8, WinForms, **nessuna dipendenza NuGet** — nemmeno per il PDF, generato a mano con
+i font Courier standard del formato, né per il `.docx`, che è uno zip di XML.
 
 ```
 src/DraftLite/
-  Model/      ElementType, ElementStyle (metriche tipografiche), ScreenElement, Screenplay
+  Model/      ElementType, ElementStyle (metriche tipografiche), ScreenElement + ElementMeta,
+              Screenplay (numerazione, sides), Revision, TitlePage
   Editor/     ScreenplayEditor (RichTextBox + PARAFORMAT2), NativeMethods
-  IO/         DraftLiteFile, FountainIO, FdxIO, Paginator, PdfBuilder, PdfExporter
-  UI/         MainForm, TitlePageForm, ReportForm, FindForm, AppSettings
+  IO/         DraftLiteFile, FountainIO, FdxIO, TextImporter (docx/rtf/txt),
+              Paginator, ScreenplayStats, PdfBuilder, PdfExporter
+  UI/         MainForm, CardsForm, ReportForm, AppearanceForm, SmallDialogs,
+              TitlePageForm, FindForm, UpdateChecker, Theme, AppSettings
+installer/    DraftLite.iss (script Inno Setup), copione.ico (icona dei file)
 ```
 
-Il tipo di ogni paragrafo non è tenuto in una struttura parallela ma codificato nella
-formattazione del paragrafo stesso (rientro + spazio prima + allineamento): così resta
-corretto anche dopo copia/incolla, annulla e ripristina, senza sincronizzazioni da mantenere.
+Due scelte che spiegano il resto:
+
+- **Il tipo di ogni paragrafo non è tenuto in una struttura parallela**, è codificato nella
+  formattazione del paragrafo stesso (rientro + spazio prima + allineamento). Così resta
+  corretto anche dopo copia, incolla, annulla e ripristina, senza niente da sincronizzare.
+- **I dati che nel testo non ci stanno** (note, sinossi, colori, numeri di scena) vivono in una
+  lista parallela riallineata a ogni modifica confrontando prefisso e suffisso del documento;
+  quello che sparisce resta in panchina e torna al suo posto se la riga ricompare.
 
 ---
 

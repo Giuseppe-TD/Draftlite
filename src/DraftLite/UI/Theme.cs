@@ -24,6 +24,18 @@ public sealed class Theme
     public Color Rule = Color.FromArgb(178, 172, 160);      // interruzioni di pagina
     public Color Shadow = Color.FromArgb(60, 0, 0, 0);
 
+    // ---- barra multifunzione
+    /// <summary>Colore di evidenza: pulsante sotto il mouse, linguetta attiva, pulsante premuto.</summary>
+    public Color Accent = Color.FromArgb(176, 138, 74);
+    /// <summary>Fondo del corpo della barra.</summary>
+    public Color RibbonBack = Color.FromArgb(246, 244, 238);
+    /// <summary>Fondo della riga delle linguette.</summary>
+    public Color RibbonHead = Color.FromArgb(230, 227, 218);
+    /// <summary>Linee sottili: bordi, separatori fra i gruppi.</summary>
+    public Color RibbonLine = Color.FromArgb(206, 201, 190);
+    /// <summary>Testo secondario: titoli dei gruppi, numeri del righello.</summary>
+    public Color Faint = Color.FromArgb(128, 122, 112);
+
     public Color SceneColor = Color.FromArgb(28, 61, 90);
     public Color ActionColor = Color.FromArgb(35, 32, 27);
     public Color CharacterColor = Color.FromArgb(107, 58, 31);
@@ -54,6 +66,11 @@ public sealed class Theme
         PanelText = Color.FromArgb(32, 32, 32),
         NoteBack = Color.FromArgb(255, 246, 200),
         Rule = Color.FromArgb(190, 190, 196),
+        Accent = Color.FromArgb(43, 110, 190),
+        RibbonBack = Color.FromArgb(250, 250, 251),
+        RibbonHead = Color.FromArgb(236, 236, 240),
+        RibbonLine = Color.FromArgb(214, 214, 220),
+        Faint = Color.FromArgb(118, 118, 124),
         SceneColor = Color.FromArgb(22, 58, 96),
         ActionColor = Color.FromArgb(26, 26, 26),
         CharacterColor = Color.FromArgb(120, 60, 24),
@@ -73,6 +90,11 @@ public sealed class Theme
         NoteBack = Color.FromArgb(74, 67, 32),
         Rule = Color.FromArgb(72, 74, 80),
         Shadow = Color.FromArgb(90, 0, 0, 0),
+        Accent = Color.FromArgb(94, 150, 220),
+        RibbonBack = Color.FromArgb(44, 46, 51),
+        RibbonHead = Color.FromArgb(32, 34, 38),
+        RibbonLine = Color.FromArgb(64, 66, 72),
+        Faint = Color.FromArgb(150, 152, 158),
         SceneColor = Color.FromArgb(126, 178, 232),
         ActionColor = Color.FromArgb(226, 226, 226),
         CharacterColor = Color.FromArgb(226, 170, 120),
@@ -91,6 +113,11 @@ public sealed class Theme
         PanelText = Color.FromArgb(52, 44, 34),
         NoteBack = Color.FromArgb(234, 223, 168),
         Rule = Color.FromArgb(176, 160, 132),
+        Accent = Color.FromArgb(150, 104, 52),
+        RibbonBack = Color.FromArgb(243, 235, 217),
+        RibbonHead = Color.FromArgb(228, 217, 193),
+        RibbonLine = Color.FromArgb(202, 188, 160),
+        Faint = Color.FromArgb(132, 118, 96),
         SceneColor = Color.FromArgb(78, 54, 26),
         ActionColor = Color.FromArgb(59, 50, 40),
         CharacterColor = Color.FromArgb(122, 52, 30),

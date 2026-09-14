@@ -36,6 +36,12 @@ public sealed class AppSettings
     /// <summary>Numero di pagina e linea di stacco nel margine del foglio.</summary>
     public bool ShowPageBreaks { get; set; } = true;
 
+    /// <summary>Righello in pollici sopra la pagina.</summary>
+    public bool ShowRuler { get; set; } = true;
+
+    /// <summary>Linguetta della barra multifunzione aperta all'avvio.</summary>
+    public int RibbonTab { get; set; } = 1;
+
     /// <summary>Quante copie datate tenere accanto al file a ogni salvataggio.</summary>
     public int BackupCount { get; set; } = 10;
 

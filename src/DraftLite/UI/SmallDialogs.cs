@@ -93,6 +93,186 @@ public sealed class SidesForm : Form
     }
 }
 
+/// <summary>Salto rapido a una scena o a una pagina.</summary>
+public sealed class GoToForm : Form
+{
+    private readonly RadioButton _scene = new RadioButton { Text = "Scena numero", Checked = true };
+    private readonly RadioButton _page = new RadioButton { Text = "Pagina numero" };
+    private readonly NumericUpDown _number = new NumericUpDown { Minimum = 1, Maximum = 9999, Value = 1 };
+
+    public bool ByScene => _scene.Checked;
+    public int Number => (int)_number.Value;
+
+    public GoToForm(int scenes, int pages)
+    {
+        Text = "Vai a";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MaximizeBox = MinimizeBox = false;
+        ClientSize = new Size(320, 160);
+        Font = new Font("Segoe UI", 9f);
+
+        _scene.SetBounds(16, 16, 150, 22);
+        _page.SetBounds(16, 44, 150, 22);
+        _number.SetBounds(180, 28, 110, 23);
+        Controls.Add(_scene);
+        Controls.Add(_page);
+        Controls.Add(_number);
+
+        Controls.Add(new Label
+        {
+            Text = "Nel copione ci sono " + scenes + " scene e " + pages + " pagine.",
+            Left = 16, Top = 78, Width = 290,
+            ForeColor = Color.FromArgb(110, 110, 110)
+        });
+
+        var ok = new Button { Text = "Vai", DialogResult = DialogResult.OK, Width = 90, Left = 118, Top = 112 };
+        var cancel = new Button { Text = "Annulla", DialogResult = DialogResult.Cancel, Width = 90, Left = 214, Top = 112 };
+        Controls.Add(ok);
+        Controls.Add(cancel);
+        AcceptButton = ok;
+        CancelButton = cancel;
+    }
+}
+
+/// <summary>Rinomina un personaggio in tutto il copione.</summary>
+public sealed class RenameCharacterForm : Form
+{
+    private readonly ComboBox _from = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly TextBox _to = new TextBox { CharacterCasing = CharacterCasing.Upper };
+    private readonly CheckBox _alsoText = new CheckBox
+    {
+        Text = "Cambia il nome anche dentro azioni e dialoghi",
+        Checked = true
+    };
+
+    public string OldName => _from.SelectedItem as string;
+    public string NewName => _to.Text.Trim();
+    public bool AlsoInText => _alsoText.Checked;
+
+    public RenameCharacterForm(IEnumerable<string> characters, string preselect)
+    {
+        Text = "Rinomina personaggio";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MaximizeBox = MinimizeBox = false;
+        ClientSize = new Size(400, 190);
+        Font = new Font("Segoe UI", 9f);
+
+        Controls.Add(new Label { Text = "Personaggio", Left = 14, Top = 19, Width = 90 });
+        _from.SetBounds(110, 16, 270, 23);
+        foreach (var c in characters) _from.Items.Add(c);
+        if (preselect != null && _from.Items.Contains(preselect)) _from.SelectedItem = preselect;
+        else if (_from.Items.Count > 0) _from.SelectedIndex = 0;
+        Controls.Add(_from);
+
+        Controls.Add(new Label { Text = "Nuovo nome", Left = 14, Top = 53, Width = 90 });
+        _to.SetBounds(110, 50, 270, 23);
+        _to.Text = _from.SelectedItem as string ?? string.Empty;
+        Controls.Add(_to);
+
+        _from.SelectedIndexChanged += (s, e) => _to.Text = _from.SelectedItem as string ?? string.Empty;
+
+        _alsoText.SetBounds(112, 84, 280, 22);
+        Controls.Add(_alsoText);
+
+        Controls.Add(new Label
+        {
+            Text = "Le estensioni (V.O.), (F.C.), (CONT'D) restano dove sono.",
+            Left = 112, Top = 110, Width = 280,
+            ForeColor = Color.FromArgb(110, 110, 110)
+        });
+
+        var ok = new Button { Text = "Rinomina", DialogResult = DialogResult.OK, Width = 100, Left = 180, Top = 144 };
+        var cancel = new Button { Text = "Annulla", DialogResult = DialogResult.Cancel, Width = 100, Left = 284, Top = 144 };
+        Controls.Add(ok);
+        Controls.Add(cancel);
+        AcceptButton = ok;
+        CancelButton = cancel;
+    }
+}
+
+/// <summary>Elenco dei personaggi con battute, parole e scene: da qui si rinomina o si esportano i sides.</summary>
+public sealed class CastListForm : Form
+{
+    private readonly ListView _list = new ListView
+    {
+        View = View.Details,
+        FullRowSelect = true,
+        HideSelection = false,
+        Dock = DockStyle.Fill
+    };
+
+    /// <summary>Personaggio scelto per rinominarlo; null se si chiude e basta.</summary>
+    public string RenameRequested { get; private set; }
+    /// <summary>Personaggio scelto per i sides; null se non richiesti.</summary>
+    public string SidesRequested { get; private set; }
+
+    public CastListForm(ScreenplayStats stats, Theme theme)
+    {
+        Text = "Elenco personaggi";
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = false;
+        ClientSize = new Size(560, 420);
+        Font = new Font("Segoe UI", 9f);
+
+        _list.Columns.Add("Personaggio", 190);
+        _list.Columns.Add("Battute", 70, HorizontalAlignment.Right);
+        _list.Columns.Add("Parole", 70, HorizontalAlignment.Right);
+        _list.Columns.Add("Scene", 60, HorizontalAlignment.Right);
+        _list.Columns.Add("Prima scena", 140);
+
+        foreach (var c in stats.Characters)
+        {
+            var it = new ListViewItem(c.Name);
+            it.SubItems.Add(c.Speeches.ToString());
+            it.SubItems.Add(c.Words.ToString());
+            it.SubItems.Add(c.SceneCount.ToString());
+            it.SubItems.Add(c.FirstScene ?? string.Empty);
+            _list.Items.Add(it);
+        }
+        if (_list.Items.Count > 0) _list.Items[0].Selected = true;
+
+        var bottom = new Panel { Dock = DockStyle.Bottom, Height = 48 };
+        var rename = new Button { Text = "Rinomina...", Width = 110, Left = 12, Top = 10 };
+        var sides = new Button { Text = "Sides in PDF...", Width = 130, Left = 130, Top = 10 };
+        var close = new Button { Text = "Chiudi", DialogResult = DialogResult.Cancel, Width = 100, Left = 440, Top = 10 };
+
+        string Selected() => _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Text : null;
+
+        rename.Click += (s, e) =>
+        {
+            var who = Selected();
+            if (who == null) return;
+            RenameRequested = who;
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        sides.Click += (s, e) =>
+        {
+            var who = Selected();
+            if (who == null) return;
+            SidesRequested = who;
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+
+        bottom.Controls.Add(rename);
+        bottom.Controls.Add(sides);
+        bottom.Controls.Add(close);
+
+        Controls.Add(_list);
+        Controls.Add(bottom);
+        CancelButton = close;
+
+        BackColor = theme.Panel;
+        ForeColor = theme.PanelText;
+        bottom.BackColor = theme.Panel;
+        _list.BackColor = theme.Paper;
+        _list.ForeColor = theme.Ink;
+    }
+}
+
 /// <summary>Stato della bozza: colore, data, asterischi.</summary>
 public sealed class RevisionForm : Form
 {

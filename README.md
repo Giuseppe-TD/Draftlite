@@ -9,6 +9,21 @@ sta zitto su tutto il resto. Niente licenze, niente abbonamenti, un solo eseguib
 
 ---
 
+## La barra
+
+Sei linguette — **File, Home, Inserisci, Formato, Vista, Modifica** — con i comandi raggruppati
+come nei programmi di scrittura veri: appunti, carattere, elementi, viste, zoom, aspetto. I
+pulsanti sono disegnati dal programma, quindi seguono il tema (anche quello scuro) e non c'è
+nessuna libreria di terze parti dietro. Se la finestra si stringe, i gruppi di destra tengono la
+sola icona invece di sparire: il comando resta lì, la scritta va nel suggerimento.
+
+Sopra il foglio c'è il **righello** in pollici, con i due indicatori che mostrano dove comincia e
+dove finisce l'elemento su cui stai scrivendo: il dialogo rientra, il personaggio sta più in
+dentro, l'azione tiene tutta la riga. Si spegne da *Vista*.
+
+Tutto quello che c'è nella barra sta anche nei menu, con le stesse scorciatoie: la barra è solo
+la strada più corta.
+
 ## Scrivere
 
 **Formattazione automatica.** Sei elementi (Scena, Azione, Personaggio, Parentetica, Dialogo,
@@ -50,6 +65,27 @@ nella finestra di esportazione.
 **Come ti pare.** Tema carta (avorio, riposante) oltre a chiaro, seppia e scuro; carattere a
 scelta tra quelli a larghezza fissa; ingrandimento dal 75% al 200%; macchina da scrivere che
 tiene la riga corrente a metà schermo (`F11`).
+
+**Maiuscolo e minuscolo.** `Shift+F3` gira la selezione fra TUTTO MAIUSCOLO, tutto minuscolo e
+Iniziali Maiuscole, un paragrafo per volta: il tipo di ogni elemento resta quello che era.
+
+**Interruzione di pagina.** `Ctrl+Invio` mette una riga di `===` e da lì in poi si stampa su una
+pagina nuova — la convenzione di Fountain, quindi il file resta leggibile anche fuori da qui.
+
+**Seleziona la scena.** `Ctrl+Shift+A` prende tutta la scena su cui sei, dall'intestazione a
+quella dopo: comoda per spostarla o cancellarla in un colpo solo.
+
+**Vai a.** `Ctrl+G` salta a una scena o a una pagina per numero.
+
+**Elenco personaggi.** `F4` apre chi parla, quante battute, quante parole, in quante scene e da
+quale scena: da lì si rinomina un personaggio in tutto il copione (le estensioni tipo (V.O.)
+restano al loro posto) o si esportano i suoi sides.
+
+**Simboli.** Trattino lungo, puntini, virgolette basse: quelli che sulla tastiera italiana non
+ci sono e che in una sceneggiatura servono di continuo.
+
+**Ripristina il paragrafo.** Toglie da una riga i grassetti, i corsivi e i colori messi a mano e
+la riporta com'era prevista dal suo tipo.
 
 **Le pagine si vedono.** Nel margine del foglio compaiono il numero di pagina e la riga di
 stacco dove il PDF andrà a capo: sai sempre a che pagina sei mentre scrivi.
@@ -107,10 +143,16 @@ Tab su un nome   apre la parentetica             Ctrl+5   Dialogo
 Invio su vuoto   torna ad Azione                 Ctrl+6   Transizione
 
 Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato   Ctrl+D dialogo simultaneo
+Shift+F3 MAIUSCOLO / minuscolo / Iniziali
 Colore del testo ed evidenziatore: menù Formato, o i due pulsanti colorati in barra
-Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF   Ctrl+F trova
-F6 schede scena   F7 frontespizio   F8 statistiche   F9 pannello laterale
-F11 macchina da scrivere   Ctrl+M nota   Ctrl+ +/- zoom   F1 aiuto
+
+Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF
+Ctrl+F trova   Ctrl+G vai a scena o pagina   Ctrl+A tutto   Ctrl+Shift+A la scena
+Ctrl+Shift+N nuova scena   Ctrl+Invio interruzione di pagina
+
+F4 elenco personaggi   F6 schede scena   F7 frontespizio   F8 statistiche
+F9 pannello laterale   F11 macchina da scrivere   Ctrl+M nota
+Ctrl+ +/- zoom   Ctrl+0 zoom 100%   F1 aiuto
 ```
 
 Scrivendo `INT.` o `EST.` all'inizio di un'azione, la riga diventa da sola un'intestazione di
@@ -158,8 +200,8 @@ Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Li
 L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.4.0 installer\DraftLite.iss
-# esce in installer\Output\DraftLite-Setup-1.4.0.exe
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.5.0 installer\DraftLite.iss
+# esce in installer\Output\DraftLite-Setup-1.5.0.exe
 ```
 
 La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
@@ -167,7 +209,7 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-git tag v1.4.0 && git push origin v1.4.0
+git tag v1.5.0 && git push origin v1.5.0
 ```
 
 I file della release hanno sempre lo stesso nome, quindi questi due link valgono per sempre e
@@ -191,7 +233,8 @@ src/DraftLite/
   Editor/     ScreenplayEditor (RichTextBox + PARAFORMAT2), NativeMethods
   IO/         DraftLiteFile, FountainIO, FdxIO, TextImporter (docx/rtf/txt),
               Paginator, ScreenplayStats, PdfBuilder, PdfExporter
-  UI/         MainForm, CardsForm, ReportForm, AppearanceForm, SmallDialogs,
+  UI/         MainForm, Ribbon (barra multifunzione disegnata a mano), RibbonIcons,
+              RulerStrip, CardsForm, ReportForm, AppearanceForm, SmallDialogs,
               TitlePageForm, FindForm, UpdateChecker, Theme, Icons, AppSettings
 installer/    DraftLite.iss (script Inno Setup), copione.ico (icona dei file)
 ```
@@ -204,6 +247,10 @@ Due scelte che spiegano il resto:
 - **I dati che nel testo non ci stanno** (note, sinossi, colori, numeri di scena) vivono in una
   lista parallela riallineata a ogni modifica confrontando prefisso e suffisso del documento;
   quello che sparisce resta in panchina e torna al suo posto se la riga ricompare.
+- **La barra multifunzione è disegnata a mano**, pulsante per pulsante, e anche le icone: sono
+  vettori tracciati a runtime dentro una griglia 32×32 e poi scalati. Costa qualche riga in più,
+  ma non c'è nessun file da distribuire, niente si sgrana sui monitor ad alta densità e
+  l'inchiostro segue il tema invece di restare nero su fondo scuro.
 
 ---
 

@@ -270,6 +270,9 @@ public sealed class AppearanceForm : Form
         else if (_font.Items.Count > 0) _font.SelectedIndex = 0;
     }
 
+    /// <summary>I caratteri a larghezza fissa installati: li usa anche la barra multifunzione.</summary>
+    public static List<string> MonospaceFamilies() => MonospacedFonts();
+
     /// <summary>Un carattere va bene se "i" e "W" occupano lo stesso spazio.</summary>
     private static List<string> MonospacedFonts()
     {

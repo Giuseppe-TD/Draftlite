@@ -1305,6 +1305,17 @@ public sealed class ScreenplayEditor : RichTextBox
             return;
         }
 
+        // gia' questi colori? allora non si tocca niente: rileggere e riscrivere tutto
+        // marcherebbe il copione come modificato e butterebbe via l'annulla per nulla
+        bool same = true;
+        foreach (var kv in colors)
+        {
+            if (_elementColors.TryGetValue(kv.Key, out var old) && old.ToArgb() == kv.Value.ToArgb()) continue;
+            same = false;
+            break;
+        }
+        if (same) return;
+
         // si rilegge il contenuto con i colori vecchi e lo si riscrive con i nuovi:
         // cosi' quello che l'utente ha colorato a mano non viene travolto dal tema
         int caret = SelectionStart;
@@ -1622,18 +1633,31 @@ public sealed class ScreenplayEditor : RichTextBox
         SuspendDrawing();
         try
         {
-            SelectAll();
-            SelectionBackColor = BackColor;
-
+            // si tocca una riga per volta: cancellare lo sfondo di tutto il documento
+            // spazzerebbe via anche le evidenziazioni messe a mano dall'utente
             int pos = 0;
             for (int i = 0; i < lines.Length; i++)
             {
-                if (i < _meta.Count && _meta[i] != null && !string.IsNullOrWhiteSpace(_meta[i].Note) && lines[i].Length > 0)
+                int len = lines[i].Length;
+                if (len > 0)
                 {
-                    Select(pos, lines[i].Length);
-                    SelectionBackColor = _noteBack;
+                    bool wantsNote = i < _meta.Count && _meta[i] != null &&
+                                     !string.IsNullOrWhiteSpace(_meta[i].Note);
+
+                    Select(pos, len);
+                    if (wantsNote)
+                    {
+                        SelectionBackColor = _noteBack;
+                    }
+                    else
+                    {
+                        // si pulisce solo se era giallo nota: un colore scelto a mano resta
+                        var back = SelectionBackColor;
+                        if (!back.IsEmpty && back.ToArgb() == _noteBack.ToArgb())
+                            SelectionBackColor = BackColor;
+                    }
                 }
-                pos += lines[i].Length + 1;
+                pos += len + 1;
             }
         }
         finally
@@ -1718,6 +1742,265 @@ public sealed class ScreenplayEditor : RichTextBox
         finally { _internal = saved; }
 
         RaiseTypeChanged(true);
+    }
+
+    // ------------------------------------------------------------------ COMANDI DELLA BARRA
+
+    /// <summary>
+    /// Sostituisce la selezione lasciando l'operazione nella cronologia dell'annulla.
+    /// Assegnare SelectedText, invece, azzera l'annulla: per i comandi della barra
+    /// (elimina, simboli, maiuscolo/minuscolo) non va bene.
+    /// </summary>
+    private void ReplaceSelection(string text)
+    {
+        if (!IsHandleCreated) { SelectedText = text ?? string.Empty; return; }
+        NativeMethods.SendMessage(Handle, NativeMethods.EM_REPLACESEL,
+            (IntPtr)1, text ?? string.Empty);
+        _textCacheValid = false;
+    }
+
+    /// <summary>Inizio e fine del paragrafo sotto il cursore.</summary>
+    public (int Start, int End) ParagraphBounds()
+    {
+        var t = CachedText;
+        int caret = Math.Min(SelectionStart, t.Length);
+        return (ParagraphStartAt(t, caret), ParagraphEndAt(t, caret));
+    }
+
+    /// <summary>Seleziona tutto il paragrafo sotto il cursore.</summary>
+    public void SelectParagraph()
+    {
+        var (s, e) = ParagraphBounds();
+        Select(s, e - s);
+        Focus();
+    }
+
+    /// <summary>
+    /// Seleziona la scena sotto il cursore: dall'intestazione di scena fino a quella dopo.
+    /// Se il cursore sta prima della prima scena, prende tutto quello che c'e' prima.
+    /// </summary>
+    public void SelectScene()
+    {
+        var index = GetSceneIndex();
+        int caret = SelectionStart;
+
+        int start = 0, end = TextLength;
+        for (int i = 0; i < index.Count; i++)
+        {
+            if (index[i].CharIndex <= caret)
+            {
+                start = index[i].CharIndex;
+                end = (i + 1 < index.Count) ? index[i + 1].CharIndex - 1 : TextLength;
+            }
+            else
+            {
+                if (i == 0) end = index[0].CharIndex - 1;
+                break;
+            }
+        }
+
+        if (end < start) end = start;
+        Select(start, end - start);
+        Focus();
+    }
+
+    /// <summary>
+    /// Toglie dal paragrafo corrente grassetto, corsivo, sottolineato, colori ed
+    /// evidenziazioni messi a mano: torna come lo vuole il suo tipo di elemento.
+    /// </summary>
+    public void RevertParagraph()
+    {
+        if (!IsHandleCreated) return;
+
+        var (start, end) = ParagraphBounds();
+        if (end <= start) return;
+
+        var type = CurrentType;
+        var st = ElementStyle.Get(type);
+        int caret = SelectionStart;
+
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            Select(start, end - start);
+
+            var cf = CHARFORMAT2.Create();
+            cf.dwMask = NativeMethods.CFM_BOLD | NativeMethods.CFM_ITALIC | NativeMethods.CFM_UNDERLINE;
+            cf.dwEffects = st.Bold ? NativeMethods.CFM_BOLD : 0u;
+            NativeMethods.SendMessage(Handle, NativeMethods.EM_SETCHARFORMAT,
+                (IntPtr)NativeMethods.SCF_SELECTION, ref cf);
+
+            SelectionColor = _elementColors.TryGetValue(type, out var c) ? c : ForeColor;
+            SelectionBackColor = HasNoteAtCaret ? _noteBack : BackColor;
+        }
+        finally
+        {
+            Select(Math.Min(caret, TextLength), 0);
+            ResumeDrawing();
+            _internal = saved;
+            _textCacheValid = false;
+        }
+
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    private bool HasNoteAtCaret => !string.IsNullOrWhiteSpace(NoteAtCaret);
+
+    /// <summary>
+    /// Maiuscolo/minuscolo a rotazione sulla selezione (o sul paragrafo, se non c'e'
+    /// selezione): TUTTO MAIUSCOLO, tutto minuscolo, Iniziali Maiuscole.
+    /// </summary>
+    public void CycleCase()
+    {
+        if (!IsHandleCreated) return;
+
+        var t = CachedText;
+        int start = SelectionStart, len = SelectionLength;
+        if (len == 0)
+        {
+            var (s, e) = ParagraphBounds();
+            start = s; len = e - s;
+            if (len == 0) return;
+        }
+
+        start = Math.Max(0, Math.Min(start, t.Length));
+        len = Math.Max(0, Math.Min(len, t.Length - start));
+        if (len == 0) return;
+
+        var text = t.Substring(start, len);
+        if (string.IsNullOrWhiteSpace(text)) return;
+
+        // il giro: TUTTO MAIUSCOLO -> tutto minuscolo -> Iniziali Maiuscole -> ...
+        Func<string, string> convert;
+        if (text == text.ToUpperInvariant() && text != text.ToLowerInvariant())
+            convert = s => s.ToLowerInvariant();
+        else if (text == text.ToLowerInvariant())
+            convert = TitleCase;
+        else
+            convert = s => s.ToUpperInvariant();
+
+        // si riscrive un paragrafo per volta: sostituendo un blocco che contiene
+        // degli "a capo" si perderebbe il tipo di ogni paragrafo dopo il primo
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            int pos = start;
+            int end = start + len;
+            while (pos < end)
+            {
+                int stop = t.IndexOf('\n', pos);
+                if (stop < 0 || stop > end) stop = end;
+
+                int pieceLen = stop - pos;
+                if (pieceLen > 0)
+                {
+                    var piece = t.Substring(pos, pieceLen);
+                    var changed = convert(piece);
+                    // il cambio di caso non cambia la lunghezza: se per qualche carattere
+                    // strano la cambiasse, si lascia stare quel pezzo e gli indici restano buoni
+                    if (changed.Length == pieceLen && !string.Equals(piece, changed, StringComparison.Ordinal))
+                    {
+                        Select(pos, pieceLen);
+                        ReplaceSelection(changed);
+                    }
+                }
+                pos = stop + 1;
+            }
+
+            Select(start, len);
+        }
+        finally
+        {
+            ResumeDrawing();
+            _internal = saved;
+            _textCacheValid = false;
+        }
+
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    private static string TitleCase(string s)
+    {
+        var chars = s.ToCharArray();
+        bool newWord = true;
+        for (int i = 0; i < chars.Length; i++)
+        {
+            if (char.IsLetter(chars[i]))
+            {
+                chars[i] = newWord ? char.ToUpper(chars[i], CultureInfo.CurrentCulture) : chars[i];
+                newWord = false;
+            }
+            else if (chars[i] == ' ' || chars[i] == '\t' || chars[i] == '-' ||
+                     chars[i] == '.' || chars[i] == '(' || chars[i] == '"')
+                newWord = true;
+        }
+        return new string(chars);
+    }
+
+    /// <summary>Scrive del testo dove sta il cursore (simboli, trattini, virgolette).</summary>
+    public void InsertText(string s)
+    {
+        if (string.IsNullOrEmpty(s) || !IsHandleCreated) return;
+        ReplaceSelection(s);
+        Focus();
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Cancella la selezione, lasciando l'operazione annullabile.</summary>
+    public void DeleteSelection()
+    {
+        if (!IsHandleCreated || SelectionLength == 0) return;
+        ReplaceSelection(string.Empty);
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// Apre un elemento nuovo del tipo indicato subito sotto il paragrafo corrente
+    /// e ci porta dentro il cursore.
+    /// </summary>
+    public void InsertElement(ElementType type, string text)
+    {
+        if (!IsHandleCreated) return;
+
+        var (_, end) = ParagraphBounds();
+        bool saved = _internal;
+        _internal = true;
+        try
+        {
+            Select(end, 0);
+            ReplaceSelection("\n" + (text ?? string.Empty));
+            Select(end + 1, 0);
+        }
+        finally { _internal = saved; _textCacheValid = false; }
+
+        ApplyType(type);
+        Select(Math.Min(end + 1 + (text ?? string.Empty).Length, TextLength), 0);
+        Focus();
+        OnTextChanged(EventArgs.Empty);
+    }
+
+    /// <summary>Grassetto, corsivo e sottolineato attivi sotto il cursore: servono ai pulsanti.</summary>
+    public (bool Bold, bool Italic, bool Underline) CurrentStyles()
+    {
+        if (!IsHandleCreated) return (false, false, false);
+        try
+        {
+            var cur = CHARFORMAT2.Create();
+            NativeMethods.SendMessage(Handle, NativeMethods.EM_GETCHARFORMAT,
+                (IntPtr)NativeMethods.SCF_SELECTION, ref cur);
+
+            bool On(uint mask) => (cur.dwMask & mask) != 0 && (cur.dwEffects & mask) != 0;
+
+            bool baseBold = ElementStyle.Get(CurrentType).Bold;
+            return (On(NativeMethods.CFM_BOLD) && !baseBold,
+                    On(NativeMethods.CFM_ITALIC),
+                    On(NativeMethods.CFM_UNDERLINE));
+        }
+        catch { return (false, false, false); }
     }
 
     // ------------------------------------------------------------------ ASPETTO

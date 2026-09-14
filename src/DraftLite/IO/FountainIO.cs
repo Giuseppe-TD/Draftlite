@@ -91,6 +91,17 @@ public static class FountainIO
                 continue;
             }
 
+            // riga di soli "=" : interruzione di pagina voluta (va prima della sinossi,
+            // che comincia anche lei con "=")
+            if (t.Length >= 3 && t.All(c => c == '='))
+            {
+                FlushAction();
+                sp.Elements.Add(new ScreenElement(ElementType.Action, Screenplay.PageBreakMark));
+                i++;
+                prevBlank = false;
+                continue;
+            }
+
             // sinossi: appartiene alla scena appena letta
             if (t.StartsWith("="))
             {

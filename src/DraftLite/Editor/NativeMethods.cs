@@ -108,6 +108,9 @@ internal static class NativeMethods
     public const int EM_GETCHARFORMAT = WM_USER + 58; // 0x43A
     public const int EM_SETCHARFORMAT = WM_USER + 68; // 0x444
 
+    /// <summary>Sostituisce la selezione; con wParam=1 l'operazione resta annullabile.</summary>
+    public const int EM_REPLACESEL = 0x00C2;
+
     public const int SCF_SELECTION = 0x0001;
     public const int SCF_ALL = 0x0004;
 
@@ -139,4 +142,7 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", CharSet = CharSet.Auto)]
     public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
 }

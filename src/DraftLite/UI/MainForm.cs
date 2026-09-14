@@ -32,11 +32,11 @@ public sealed class MainForm : Form
     private readonly SplitContainer _split = new SplitContainer { Dock = DockStyle.Fill };
     private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, Tag = "desk" };
     private readonly Panel _page = new Panel { Padding = new Padding(34, 18, 14, 10), Tag = "page" };
+    private readonly RulerStrip _ruler = new RulerStrip();
     private readonly StatusStrip _status = new StatusStrip();
     private readonly ToolStripStatusLabel _lblType = new ToolStripStatusLabel { AutoSize = false, Width = 150, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripStatusLabel _lblScene = new ToolStripStatusLabel { AutoSize = false, Width = 300, TextAlign = ContentAlignment.MiddleLeft };
     private readonly ToolStripStatusLabel _lblPages = new ToolStripStatusLabel { Spring = true, TextAlign = ContentAlignment.MiddleRight };
-    private readonly ToolStripComboBox _cboType = new ToolStripComboBox { Width = 140, DropDownStyle = ComboBoxStyle.DropDownList };
     private readonly System.Windows.Forms.Timer _statsTimer = new System.Windows.Forms.Timer { Interval = 4000 };
     private readonly System.Windows.Forms.Timer _autoSaveTimer = new System.Windows.Forms.Timer { Interval = 120000 };
 
@@ -55,6 +55,9 @@ public sealed class MainForm : Form
     private FindForm _findForm;
     private ToolStripMenuItem _typewriterItem;
     private ToolStripMenuItem _askElementItem;
+    private ToolStripMenuItem _navItem;
+    private ToolStripMenuItem _breaksItem;
+    private ToolStripMenuItem _rulerItem;
     private List<(int CharIndex, int Page)> _pageBreaks = new List<(int, int)>();
     private Font _gutterFont = new Font("Segoe UI", 7f, FontStyle.Bold);
 
@@ -65,6 +68,7 @@ public sealed class MainForm : Form
             _gutterFont?.Dispose();
             _statsTimer?.Dispose();
             _autoSaveTimer?.Dispose();
+            _tips?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -100,11 +104,14 @@ public sealed class MainForm : Form
     private void BuildUi()
     {
         var menu = BuildMenu();
-        var tool = BuildToolbar();
+        var ribbon = BuildRibbon();
 
         _page.Controls.Add(_editor);
         _editor.Dock = DockStyle.Fill;
         _pageHost.Controls.Add(_page);
+        _pageHost.Controls.Add(_ruler);
+        _ruler.Visible = _settings.ShowRuler;
+        _ruler.BringToFront();
 
         var tabScenes = new TabPage("Scene");
         tabScenes.Controls.Add(_sceneList);
@@ -120,7 +127,7 @@ public sealed class MainForm : Form
         _status.Items.AddRange(new ToolStripItem[] { _lblType, _lblScene, _lblPages });
 
         Controls.Add(_split);
-        Controls.Add(tool);
+        Controls.Add(ribbon);
         Controls.Add(menu);
         Controls.Add(_status);
         MainMenuStrip = menu;
@@ -242,7 +249,13 @@ public sealed class MainForm : Form
         edit.DropDownItems.Add(Mi("Copia", Keys.Control | Keys.C, (s, e) => _editor.Copy()));
         edit.DropDownItems.Add(Mi("Incolla", Keys.Control | Keys.V, (s, e) => _editor.PasteFromClipboard()));
         edit.DropDownItems.Add(new ToolStripSeparator());
+        edit.DropDownItems.Add(Mi("Seleziona tutto", Keys.Control | Keys.A, (s, e) => { _editor.SelectAll(); _editor.Focus(); }));
+        edit.DropDownItems.Add(Mi("Seleziona la scena", Keys.Control | Keys.Shift | Keys.A, (s, e) => _editor.SelectScene()));
+        edit.DropDownItems.Add(Mi("Elimina la selezione", Keys.None, (s, e) => DeleteSelection()));
+        edit.DropDownItems.Add(new ToolStripSeparator());
         edit.DropDownItems.Add(Mi("Trova e sostituisci...", Keys.Control | Keys.F, (s, e) => ShowFind()));
+        edit.DropDownItems.Add(Mi("Vai a...", Keys.Control | Keys.G, (s, e) => GoTo()));
+        edit.DropDownItems.Add(Mi("Rinomina personaggio...", Keys.None, (s, e) => RenameCharacter(null)));
         menu.Items.Add(edit);
 
         // ---------------- Formato
@@ -270,6 +283,11 @@ public sealed class MainForm : Form
         FillColorMenu(highlightMenu, true);
         format.DropDownItems.Add(highlightMenu);
 
+        format.DropDownItems.Add(Mi("Maiuscolo / minuscolo", Keys.Shift | Keys.F3,
+            (s, e) => { _editor.CycleCase(); SetDirty(true); _editor.Focus(); }));
+        format.DropDownItems.Add(Mi("Ripristina il paragrafo", Keys.None,
+            (s, e) => { _editor.RevertParagraph(); SetDirty(true); _editor.Focus(); }));
+
         format.DropDownItems.Add(new ToolStripSeparator());
         format.DropDownItems.Add(Mi("Dialogo simultaneo", Keys.Control | Keys.D,
             (s, e) => { _editor.ToggleDual(); _editor.Focus(); }));
@@ -283,19 +301,48 @@ public sealed class MainForm : Form
         format.DropDownItems.Add(ext);
         menu.Items.Add(format);
 
+        // ---------------- Inserisci
+        var insert = new ToolStripMenuItem("&Inserisci");
+        insert.DropDownItems.Add(Mi("Nuova scena", Keys.Control | Keys.Shift | Keys.N,
+            (s, e) => _editor.InsertElement(ElementType.SceneHeading, string.Empty)));
+        insert.DropDownItems.Add(Mi("Nuovo personaggio", Keys.None,
+            (s, e) => _editor.InsertElement(ElementType.Character, string.Empty)));
+        insert.DropDownItems.Add(Mi("Interruzione di pagina", Keys.Control | Keys.Enter,
+            (s, e) => InsertPageBreak()));
+        insert.DropDownItems.Add(new ToolStripSeparator());
+        insert.DropDownItems.Add(Mi("Nota sull'elemento...", Keys.Control | Keys.M, (s, e) => EditNote()));
+
+        var symbols = new ToolStripMenuItem("Simboli");
+        FillSymbolMenu(symbols);
+        insert.DropDownItems.Add(symbols);
+        menu.Items.Add(insert);
+
         // ---------------- Vista
         var view = new ToolStripMenuItem("&Vista");
-        var navItem = Mi("Pannello laterale", Keys.F9, null);
-        navItem.CheckOnClick = true;
-        navItem.Checked = _settings.ShowNavigator;
-        navItem.CheckedChanged += (s, e) =>
+        _navItem = Mi("Pannello laterale", Keys.F9, null);
+        _navItem.CheckOnClick = true;
+        _navItem.Checked = _settings.ShowNavigator;
+        _navItem.CheckedChanged += (s, e) =>
         {
-            _settings.ShowNavigator = navItem.Checked;
-            _split.Panel1Collapsed = !navItem.Checked;
+            _settings.ShowNavigator = _navItem.Checked;
+            _split.Panel1Collapsed = !_navItem.Checked;
+            _ribbon?.SetChecked("navigator", _navItem.Checked);
         };
-        view.DropDownItems.Add(navItem);
+        view.DropDownItems.Add(_navItem);
         view.DropDownItems.Add(Mi("Schede scena...", Keys.F6, (s, e) => ShowCards()));
         view.DropDownItems.Add(new ToolStripSeparator());
+
+        _rulerItem = Mi("Righello", Keys.None, null);
+        _rulerItem.CheckOnClick = true;
+        _rulerItem.Checked = _settings.ShowRuler;
+        _rulerItem.CheckedChanged += (s, e) =>
+        {
+            _settings.ShowRuler = _rulerItem.Checked;
+            _ruler.Visible = _rulerItem.Checked;
+            _ribbon?.SetChecked("ruler", _rulerItem.Checked);
+            LayoutPage();
+        };
+        view.DropDownItems.Add(_rulerItem);
 
         _typewriterItem = Mi("Macchina da scrivere", Keys.F11, null);
         _typewriterItem.CheckOnClick = true;
@@ -304,6 +351,7 @@ public sealed class MainForm : Form
         {
             _settings.Typewriter = _typewriterItem.Checked;
             _editor.TypewriterMode = _typewriterItem.Checked;
+            _ribbon?.SetChecked("typewriter", _typewriterItem.Checked);
         };
         view.DropDownItems.Add(_typewriterItem);
 
@@ -314,18 +362,28 @@ public sealed class MainForm : Form
         {
             _settings.AskElementOnEnter = _askElementItem.Checked;
             _editor.AskElementOnEnter = _askElementItem.Checked;
+            _ribbon?.SetChecked("askelement", _askElementItem.Checked);
         };
         view.DropDownItems.Add(_askElementItem);
 
-        var breaksItem = Mi("Mostra le interruzioni di pagina", Keys.None, null);
-        breaksItem.CheckOnClick = true;
-        breaksItem.Checked = _settings.ShowPageBreaks;
-        breaksItem.CheckedChanged += (s, e) =>
+        _breaksItem = Mi("Mostra le interruzioni di pagina", Keys.None, null);
+        _breaksItem.CheckOnClick = true;
+        _breaksItem.Checked = _settings.ShowPageBreaks;
+        _breaksItem.CheckedChanged += (s, e) =>
         {
-            _settings.ShowPageBreaks = breaksItem.Checked;
+            _settings.ShowPageBreaks = _breaksItem.Checked;
+            _ribbon?.SetChecked("breaks", _breaksItem.Checked);
             _page.Invalidate();
         };
-        view.DropDownItems.Add(breaksItem);
+        view.DropDownItems.Add(_breaksItem);
+
+        var themes = new ToolStripMenuItem("Tema");
+        foreach (var t in Theme.All)
+        {
+            var captured = t.Name;
+            themes.DropDownItems.Add(Mi(captured, Keys.None, (s, e) => SetTheme(captured)));
+        }
+        view.DropDownItems.Add(themes);
         view.DropDownItems.Add(Mi("Aspetto (carattere e tema)...", Keys.None, (s, e) => ShowAppearance()));
         view.DropDownItems.Add(new ToolStripSeparator());
         view.DropDownItems.Add(Mi("Ingrandisci", Keys.Control | Keys.Oemplus, (s, e) => Zoom(0.1f)));
@@ -337,8 +395,7 @@ public sealed class MainForm : Form
         var tools = new ToolStripMenuItem("&Strumenti");
         tools.DropDownItems.Add(Mi("Frontespizio...", Keys.F7, (s, e) => EditTitlePage()));
         tools.DropDownItems.Add(Mi("Statistiche...", Keys.F8, (s, e) => ShowReport()));
-        tools.DropDownItems.Add(new ToolStripSeparator());
-        tools.DropDownItems.Add(Mi("Nota sull'elemento...", Keys.Control | Keys.M, (s, e) => EditNote()));
+        tools.DropDownItems.Add(Mi("Elenco personaggi...", Keys.F4, (s, e) => ShowCastList()));
 
         var numbers = new ToolStripMenuItem("Numeri di scena");
         numbers.DropDownItems.Add(Mi("Blocca la numerazione", Keys.None, (s, e) => LockSceneNumbers(true)));
@@ -368,122 +425,482 @@ public sealed class MainForm : Form
         return menu;
     }
 
-    private ToolStrip _toolbar;
+    private Ribbon _ribbon;
+    private ComboBox _cboElement;
+    private ComboBox _cboFont;
+    private ComboBox _cboZoom;
 
-    /// <summary>
-    /// Ridisegna le icone con l'inchiostro del tema: sul tema scuro quelle chiare
-    /// sparirebbero nello sfondo.
-    /// </summary>
-    private void RefreshToolbarIcons()
+    /// <summary>Simboli che servono spesso e che sulla tastiera non ci sono.</summary>
+    private static readonly (string Name, string Char)[] Symbols =
     {
-        if (_toolbar == null) return;
-        var ink = _theme.PanelText;
+        ("Trattino lungo  —", "—"),
+        ("Trattino medio  –", "–"),
+        ("Puntini  …", "…"),
+        ("Virgolette basse  « »", "«»"),
+        ("Virgolette alte  “ ”", "“”"),
+        ("Apostrofo curvo  ’", "’"),
+        ("Grado  °", "°"),
+        ("Euro  €", "€"),
+        ("Paragrafo  §", "§"),
+        ("Spazio unificatore", " ")
+    };
 
-        foreach (ToolStripItem item in _toolbar.Items)
+    private void FillSymbolMenu(ToolStripDropDownItem parent) => FillSymbols(parent.DropDownItems);
+
+    private void FillSymbolMenu(ContextMenuStrip menu) => FillSymbols(menu.Items);
+
+    private void FillSymbols(ToolStripItemCollection items)
+    {
+        items.Clear();
+        foreach (var (name, ch) in Symbols)
         {
-            if (!(item is ToolStripButton b) || !(b.Tag is string key)) continue;
-
-            var old = b.Image;
-            b.Image = key switch
-            {
-                "bold" => Icons.Letter("B", ink, FontStyle.Bold),
-                "italic" => Icons.Letter("I", ink, FontStyle.Italic),
-                "underline" => Icons.Letter("U", ink, FontStyle.Underline),
-                "dual" => Icons.Dual(ink),
-                "cards" => Icons.Cards(ink),
-                "note" => Icons.Note(ink),
-                "title" => Icons.TitlePage(ink),
-                "stats" => Icons.Stats(ink),
-                "pdf" => Icons.Pdf(ink),
-                _ => b.Image
-            };
-            if (!ReferenceEquals(old, b.Image)) old?.Dispose();
+            var captured = ch;
+            var item = new ToolStripMenuItem(name);
+            item.Click += (s, e) => { _editor.InsertText(captured); SetDirty(true); };
+            items.Add(item);
         }
     }
 
-    private ToolStrip BuildToolbar()
-    {
-        var tool = new ToolStrip { GripStyle = ToolStripGripStyle.Hidden, RenderMode = ToolStripRenderMode.System };
-        _toolbar = tool;
+    // ------------------------------------------------------------- costruzione barra
 
-        foreach (var st in ElementStyle.All) _cboType.Items.Add(st.Name);
-        _cboType.SelectedIndexChanged += (s, e) =>
+    private RibbonButton Big(string key, string text, string tip, EventHandler onClick)
+    {
+        var b = new RibbonButton { IconKey = key, Text = text, Big = true, Height = RibbonGroup.ItemArea };
+        if (onClick != null) b.Click += onClick;
+        if (!string.IsNullOrEmpty(tip)) _tips.SetToolTip(b, tip);
+        _ribbon.Register(key, b);
+        return b;
+    }
+
+    private RibbonButton Small(string key, string text, string tip, EventHandler onClick)
+    {
+        var b = new RibbonButton { IconKey = key, Text = text, Height = 22 };
+        if (onClick != null) b.Click += onClick;
+        if (!string.IsNullOrEmpty(tip)) _tips.SetToolTip(b, tip);
+        _ribbon.Register(key, b);
+        return b;
+    }
+
+    /// <summary>Pulsantino con la sola icona, per le righe compatte (grassetto, corsivo...).</summary>
+    private RibbonButton IconBtn(string key, string tip, EventHandler onClick)
+    {
+        var b = new RibbonButton { IconKey = key, Text = string.Empty, Height = 22, Width = 26 };
+        if (onClick != null) b.Click += onClick;
+        if (!string.IsNullOrEmpty(tip)) _tips.SetToolTip(b, tip);
+        _ribbon.Register(key, b);
+        return b;
+    }
+
+    /// <summary>Pulsante con la tendina dei colori attaccata.</summary>
+    private RibbonButton ColorButton(string key, string tip, bool highlight)
+    {
+        var menu = new ContextMenuStrip { RenderMode = ToolStripRenderMode.System };
+        FillColorMenu2(menu, highlight);
+        var b = new RibbonButton
         {
-            if (_loading || _cboType.SelectedIndex < 0) return;
-            var type = ElementStyle.All.ElementAt(_cboType.SelectedIndex).Type;
+            IconKey = key,
+            Text = string.Empty,
+            Height = 22,
+            Width = 34,
+            HasArrow = true,
+            DropDown = menu
+        };
+        _tips.SetToolTip(b, tip);
+        _ribbon.Register(key, b);
+        return b;
+    }
+
+    private RibbonButton MenuButton(string key, string text, string tip, bool big, Action<ContextMenuStrip> fill)
+    {
+        var menu = new ContextMenuStrip { RenderMode = ToolStripRenderMode.System };
+        fill(menu);
+        var b = new RibbonButton
+        {
+            IconKey = key,
+            Text = text,
+            Big = big,
+            Height = big ? RibbonGroup.ItemArea : 22,
+            HasArrow = true,
+            DropDown = menu
+        };
+        if (!string.IsNullOrEmpty(tip)) _tips.SetToolTip(b, tip);
+        _ribbon.Register(key, b);
+        return b;
+    }
+
+    private readonly ToolTip _tips = new ToolTip { AutoPopDelay = 9000, InitialDelay = 500, ReshowDelay = 120 };
+
+    /// <summary>La tavolozza dentro un ContextMenuStrip (la versione per i menu sta in FillColorMenu).</summary>
+    private void FillColorMenu2(ContextMenuStrip menu, bool highlight)
+    {
+        menu.Items.Clear();
+        foreach (var (name, hex) in highlight ? HighlightPalette : TextPalette)
+        {
+            var item = new ToolStripMenuItem(name) { Image = Swatch(hex), ImageScaling = ToolStripItemImageScaling.None };
+            var captured = hex;
+            item.Click += (s, e) =>
+            {
+                var color = CardsForm.ParseColor(captured);
+                if (highlight) _editor.ApplyHighlight(color);
+                else _editor.ApplyTextColor(color);
+                _editor.Focus();
+                SetDirty(true);
+            };
+            menu.Items.Add(item);
+        }
+
+        menu.Items.Add(new ToolStripSeparator());
+        var custom = new ToolStripMenuItem("Altro colore...");
+        custom.Click += (s, e) =>
+        {
+            using var dlg = new ColorDialog { FullOpen = true, AnyColor = true };
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            if (highlight) _editor.ApplyHighlight(dlg.Color);
+            else _editor.ApplyTextColor(dlg.Color);
+            _editor.Focus();
+            SetDirty(true);
+        };
+        menu.Items.Add(custom);
+    }
+
+    /// <summary>
+    /// La barra multifunzione: cinque linguette con i comandi raggruppati come nei
+    /// programmi di scrittura veri. Tutto quello che c'e' qui sta anche nei menu,
+    /// con le stesse scorciatoie: la barra e' solo la strada piu' corta.
+    /// </summary>
+    private Ribbon BuildRibbon()
+    {
+        _ribbon = new Ribbon();
+
+        BuildTabFile(_ribbon.AddTab("File"));
+        BuildTabHome(_ribbon.AddTab("Home"));
+        BuildTabInsert(_ribbon.AddTab("Inserisci"));
+        BuildTabFormat(_ribbon.AddTab("Formato"));
+        BuildTabView(_ribbon.AddTab("Vista"));
+        BuildTabEdit(_ribbon.AddTab("Modifica"));
+
+        _ribbon.Commit();
+        _ribbon.Select(1);          // si parte da Home
+        return _ribbon;
+    }
+
+    private void BuildTabFile(RibbonTab tab)
+    {
+        var doc = tab.AddGroup("Documento");
+        doc.Add(Big("new", "Nuovo", "Copione nuovo (Ctrl+N)",
+            (s, e) => { if (ConfirmDiscard()) NewDocument(); }));
+        doc.Add(Big("open", "Apri", "Apri un copione (Ctrl+O)", (s, e) => OpenDialog()));
+        doc.Add(Big("save", "Salva", "Salva il copione (Ctrl+S)", (s, e) => Save()));
+        doc.Add(Small("saveas", "Salva con nome...", "Salva una copia (Ctrl+Shift+S)", (s, e) => SaveAs()));
+        doc.Add(Small("import", "Importa da Word o RTF...", "Porta dentro un testo gia' scritto", (s, e) => ImportDialog()));
+        doc.Add(Small("print", "Anteprima PDF...", "Esporta e apri il PDF (Ctrl+P)", (s, e) => ExportPdf()));
+
+        var exp = tab.AddGroup("Esporta");
+        exp.Add(Big("pdf", "PDF", "Esporta il copione impaginato (Ctrl+P)", (s, e) => ExportPdf()));
+        exp.Add(Big("sides", "Sides", "PDF con le sole scene di un personaggio", (s, e) => ExportSides()));
+        exp.Add(Small("stats-pdf", "Report statistiche...", "Statistiche in PDF", (s, e) => ExportReport()));
+        exp.Add(Small("export", "Fountain (.fountain)...", "Esporta in Fountain", (s, e) => ExportAs(DocFormat.Fountain)));
+        exp.Add(Small("export2", "Final Draft (.fdx)...", "Esporta per Final Draft", (s, e) => ExportAs(DocFormat.Fdx)));
+
+        var app = tab.AddGroup("Programma");
+        app.Add(Small("update", "Cerca aggiornamenti", "Controlla se c'e' una versione nuova",
+            (s, e) => UpdateChecker.CheckInBackground(this, _settings, true)));
+        app.Add(Small("help", "Scorciatoie (F1)", "Tutti i tasti", (s, e) => ShowShortcuts()));
+        app.Add(Small("settings", "Informazioni", "Versione e contatti", (s, e) => ShowAbout()));
+    }
+
+    private void BuildTabHome(RibbonTab tab)
+    {
+        // ---- appunti
+        var clip = tab.AddGroup("Appunti");
+        clip.Add(Big("paste", "Incolla", "Incolla riconoscendo gli elementi (Ctrl+V)",
+            (s, e) => { _editor.PasteFromClipboard(); _editor.Focus(); }));
+        clip.Add(Small("cut", "Taglia", "Ctrl+X", (s, e) => { _editor.Cut(); _editor.Focus(); }));
+        clip.Add(Small("copy", "Copia", "Ctrl+C", (s, e) => { _editor.Copy(); _editor.Focus(); }));
+        clip.Add(Small("delete", "Elimina", "Cancella la selezione", (s, e) => DeleteSelection()));
+
+        // ---- carattere
+        var font = tab.AddGroup("Carattere");
+        var row1 = new RibbonRow();
+        row1.Add(IconBtn("bold", "Grassetto (Ctrl+B)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Bold); _editor.Focus(); SetDirty(true); }));
+        row1.Add(IconBtn("italic", "Corsivo (Ctrl+I)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); SetDirty(true); }));
+        row1.Add(IconBtn("underline", "Sottolineato (Ctrl+U)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); SetDirty(true); }));
+        row1.Add(IconBtn("case", "MAIUSCOLO / minuscolo / Iniziali (Shift+F3)",
+            (s, e) => { _editor.CycleCase(); SetDirty(true); _editor.Focus(); }));
+        row1.Add(ColorButton("textcolor", "Colore del testo", false));
+        row1.Add(ColorButton("highlight", "Evidenziatore", true));
+        font.Add(row1);
+
+        _cboFont = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 170,
+            Height = 22,
+            Font = new Font("Segoe UI", 8.25f)
+        };
+        foreach (var f in AppearanceForm.MonospaceFamilies()) _cboFont.Items.Add(f);
+        _cboFont.SelectedIndexChanged += (s, e) =>
+        {
+            if (_loading || _cboFont.SelectedItem == null) return;
+            _settings.FontFamily = _cboFont.SelectedItem.ToString();
+            _editor.SetEditorFont(_settings.FontFamily);
+            _settings.Save();
+            LayoutPage();
+        };
+        font.Add(_cboFont);
+
+        var row2 = new RibbonRow();
+        row2.Add(IconBtn("revert", "Ripristina il paragrafo: via stili e colori messi a mano",
+            (s, e) => { _editor.RevertParagraph(); SetDirty(true); _editor.Focus(); }));
+        row2.Add(IconBtn("appearance", "Aspetto: carattere, tema, colori degli elementi",
+            (s, e) => ShowAppearance()));
+        row2.Add(IconBtn("zoomout", "Riduci (Ctrl+-)", (s, e) => Zoom(-0.1f)));
+        row2.Add(IconBtn("zoomin", "Ingrandisci (Ctrl++)", (s, e) => Zoom(0.1f)));
+        font.Add(row2);
+
+        // ---- elementi
+        var els = tab.AddGroup("Elementi");
+        _cboElement = new ComboBox
+        {
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 150,
+            Height = 22,
+            Font = new Font("Segoe UI", 8.25f)
+        };
+        foreach (var st in ElementStyle.All) _cboElement.Items.Add(st.Name);
+        _cboElement.SelectedIndexChanged += (s, e) =>
+        {
+            if (_loading || _cboElement.SelectedIndex < 0) return;
+            var type = ElementStyle.All.ElementAt(_cboElement.SelectedIndex).Type;
             if (type != _editor.CurrentType) { _editor.ApplyType(type); _editor.Focus(); }
         };
-
-        tool.Items.Add(new ToolStripLabel("Elemento:"));
-        tool.Items.Add(_cboType);
-        tool.Items.Add(new ToolStripSeparator());
-
-        void Btn(string text, string tip, string key, EventHandler h)
+        els.Add(_cboElement);
+        els.Add(Small("dual", "Dialogo simultaneo", "Affianca questa battuta alla precedente (Ctrl+D)",
+            (s, e) => { _editor.ToggleDual(); _editor.Focus(); SetDirty(true); }));
+        els.Add(MenuButton("character", "Estensione personaggio", "(V.O.), (F.C.), (CONT'D)", false, m =>
         {
-            var b = new ToolStripButton(text)
+            foreach (var x in ScreenplayEditor.CharacterExtensions)
             {
-                ToolTipText = tip,
-                Tag = key,
-                DisplayStyle = ToolStripItemDisplayStyle.ImageAndText,
-                ImageScaling = ToolStripItemImageScaling.None
-            };
-            b.Click += h;
-            tool.Items.Add(b);
-        }
+                var captured = x;
+                var it = new ToolStripMenuItem(x);
+                it.Click += (s2, e2) => { _editor.AppendCharacterExtension(captured); _editor.Focus(); SetDirty(true); };
+                m.Items.Add(it);
+            }
+        }));
 
-        void IconBtn(string tip, string key, EventHandler h)
+        // ---- inserisci
+        var ins = tab.AddGroup("Inserisci");
+        ins.Add(Big("note", "Nota", "Appunto ancorato all'elemento (Ctrl+M)", (s, e) => EditNote()));
+        ins.Add(Big("titlepage", "Frontespizio", "Titolo, autore, contatti (F7)", (s, e) => EditTitlePage()));
+        ins.Add(Small("pagebreak", "Interruzione di pagina", "Forza il salto pagina (Ctrl+Invio)",
+            (s, e) => InsertPageBreak()));
+        ins.Add(Small("scene", "Nuova scena", "Apre un'intestazione di scena (Ctrl+Shift+N)",
+            (s, e) => { _editor.InsertElement(ElementType.SceneHeading, string.Empty); SetDirty(true); }));
+        ins.Add(MenuButton("symbol", "Simboli", "Trattini, virgolette, puntini", false, FillSymbolMenu));
+
+        // ---- viste
+        var views = tab.AddGroup("Viste");
+        views.Add(Big("cards", "Schede scena", "Bacheca delle scene (F6)", (s, e) => ShowCards()));
+        views.Add(Big("stats", "Statistiche", "Pagine, scene, battute (F8)", (s, e) => ShowReport()));
+        views.Add(Toggle("navigator", "Pannello scene", "Mostra o nascondi il pannello laterale (F9)",
+            (s, e) => { if (_navItem != null) _navItem.Checked = !_navItem.Checked; }));
+        views.Add(Small("castlist", "Elenco personaggi", "Chi parla, quanto, da quando (F4)", (s, e) => ShowCastList()));
+        views.Add(Toggle("typewriter", "Macchina da scrivere", "Tiene la riga al centro (F11)",
+            (s, e) => { if (_typewriterItem != null) _typewriterItem.Checked = !_typewriterItem.Checked; }));
+    }
+
+    private void BuildTabInsert(RibbonTab tab)
+    {
+        var note = tab.AddGroup("Note");
+        note.Add(Big("note", "Nota", "Appunto ancorato all'elemento (Ctrl+M)", (s, e) => EditNote()));
+        note.Add(Small("bookmark", "Vai alle note", "Apre l'elenco delle note nel pannello laterale",
+            (s, e) => ShowSidePanel(1)));
+        note.Add(Small("delete", "Togli la nota", "Cancella la nota dell'elemento corrente",
+            (s, e) => { _editor.SetNoteAtCaret(null); RefreshNotes(); SetDirty(true); _editor.Focus(); }));
+
+        var el = tab.AddGroup("Elementi");
+        el.Add(Big("scene", "Nuova scena", "Intestazione di scena nuova (Ctrl+Shift+N)",
+            (s, e) => { _editor.InsertElement(ElementType.SceneHeading, string.Empty); SetDirty(true); }));
+        el.Add(Big("character", "Personaggio", "Nuovo blocco di dialogo",
+            (s, e) => { _editor.InsertElement(ElementType.Character, string.Empty); SetDirty(true); }));
+        el.Add(MenuButton("elements", "Altro elemento", "Azione, parentetica, transizione...", true, m =>
         {
-            var b = new ToolStripButton
+            foreach (var st in ElementStyle.All)
             {
-                ToolTipText = tip,
-                Tag = key,
-                DisplayStyle = ToolStripItemDisplayStyle.Image,
-                ImageScaling = ToolStripItemImageScaling.None
-            };
-            b.Click += h;
-            tool.Items.Add(b);
-        }
+                var type = st.Type;
+                var it = new ToolStripMenuItem(st.Name);
+                it.Click += (s2, e2) => { _editor.InsertElement(type, string.Empty); SetDirty(true); };
+                m.Items.Add(it);
+            }
+        }));
 
-        IconBtn("Grassetto (Ctrl+B)", "bold",
-            (s, e) => { _editor.ToggleStyle(FontStyle.Bold); _editor.Focus(); });
-        IconBtn("Corsivo (Ctrl+I)", "italic",
-            (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); });
-        IconBtn("Sottolineato (Ctrl+U)", "underline",
-            (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); });
-        IconBtn("Dialogo simultaneo (Ctrl+D)", "dual",
-            (s, e) => { _editor.ToggleDual(); _editor.Focus(); });
+        var page = tab.AddGroup("Pagina");
+        page.Add(Big("pagebreak", "Interruzione di pagina", "Il resto va a pagina nuova (Ctrl+Invio)",
+            (s, e) => InsertPageBreak()));
+        page.Add(Small("numbers", "Blocca i numeri di scena", "Le nuove scene diventano 12A, 12B...",
+            (s, e) => LockSceneNumbers(true)));
+        page.Add(Small("numbers2", "Sblocca i numeri", "Torna a 1, 2, 3...", (s, e) => LockSceneNumbers(false)));
+        page.Add(Small("revision", "Revisione...", "Colore bozza e asterischi", (s, e) => ShowRevision()));
 
-        var colorBtn = new ToolStripDropDownButton
+        var sym = tab.AddGroup("Simboli");
+        sym.Add(MenuButton("symbol", "Simbolo", "Trattini, virgolette, puntini", true, FillSymbolMenu));
+        sym.Add(Big("titlepage", "Frontespizio", "Titolo, autore, contatti (F7)", (s, e) => EditTitlePage()));
+    }
+
+    private void BuildTabFormat(RibbonTab tab)
+    {
+        var els = tab.AddGroup("Elementi");
+        els.Add(MenuButton("elements", "Tipo di elemento", "Cambia il tipo del paragrafo (Ctrl+1...Ctrl+6)", true, m =>
         {
-            ToolTipText = "Colore del testo",
-            Image = Swatch("#C0392B"),
-            DisplayStyle = ToolStripItemDisplayStyle.Image,
-            ImageScaling = ToolStripItemImageScaling.None
-        };
-        FillColorMenu(colorBtn, false);
-        tool.Items.Add(colorBtn);
+            int n = 1;
+            foreach (var st in ElementStyle.All)
+            {
+                var type = st.Type;
+                var it = new ToolStripMenuItem(st.Name + "\tCtrl+" + n);
+                it.Click += (s2, e2) => { _editor.ApplyType(type); _editor.Focus(); };
+                m.Items.Add(it);
+                n++;
+            }
+        }));
+        els.Add(Big("dual", "Dialogo simultaneo", "Due colonne nel PDF (Ctrl+D)",
+            (s, e) => { _editor.ToggleDual(); _editor.Focus(); SetDirty(true); }));
+        els.Add(Small("settings", "Impostazioni elementi...", "Colori e carattere di ogni elemento",
+            (s, e) => ShowAppearance()));
+        els.Add(Small("castlist", "Elenco personaggi...", "Chi parla, quanto, da quando (F4)", (s, e) => ShowCastList()));
+        els.Add(Small("rename", "Rinomina personaggio...", "In tutto il copione", (s, e) => RenameCharacter(null)));
 
-        var markBtn = new ToolStripDropDownButton
+        var text = tab.AddGroup("Testo");
+        var r1 = new RibbonRow();
+        r1.Add(IconBtn("bold", "Grassetto (Ctrl+B)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Bold); _editor.Focus(); SetDirty(true); }));
+        r1.Add(IconBtn("italic", "Corsivo (Ctrl+I)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Italic); _editor.Focus(); SetDirty(true); }));
+        r1.Add(IconBtn("underline", "Sottolineato (Ctrl+U)",
+            (s, e) => { _editor.ToggleStyle(FontStyle.Underline); _editor.Focus(); SetDirty(true); }));
+        r1.Add(IconBtn("case", "MAIUSCOLO / minuscolo / Iniziali (Shift+F3)",
+            (s, e) => { _editor.CycleCase(); SetDirty(true); _editor.Focus(); }));
+        text.Add(r1);
+
+        var r2 = new RibbonRow();
+        r2.Add(ColorButton("textcolor", "Colore del testo", false));
+        r2.Add(ColorButton("highlight", "Evidenziatore", true));
+        r2.Add(IconBtn("revert", "Ripristina il paragrafo",
+            (s, e) => { _editor.RevertParagraph(); SetDirty(true); _editor.Focus(); }));
+        text.Add(r2);
+        text.Add(Small("font", "Carattere...", "Scegli il carattere dell'editor", (s, e) => ShowAppearance()));
+
+        var par = tab.AddGroup("Paragrafo");
+        par.Add(Small("align-left", "Rientri dell'elemento", "Li decide il tipo: e' lo standard della sceneggiatura",
+            (s, e) => ShowElementInfo()));
+        par.Add(Small("spacing", "Spaziatura", "Anche questa segue lo standard", (s, e) => ShowElementInfo()));
+        par.Add(Small("revert", "Ripristina il paragrafo", "Via stili e colori messi a mano",
+            (s, e) => { _editor.RevertParagraph(); SetDirty(true); _editor.Focus(); }));
+        par.Add(Toggle("ruler", "Righello", "Mostra o nascondi il righello",
+            (s, e) => { if (_rulerItem != null) _rulerItem.Checked = !_rulerItem.Checked; }));
+
+        var rev = tab.AddGroup("Revisione");
+        rev.Add(Big("revision", "Revisione", "Colore della bozza e asterischi ai margini", (s, e) => ShowRevision()));
+        rev.Add(Small("numbers", "Blocca i numeri di scena", "12A, 12B per le scene nuove", (s, e) => LockSceneNumbers(true)));
+        rev.Add(Small("numbers2", "Sblocca i numeri", "Torna a 1, 2, 3...", (s, e) => LockSceneNumbers(false)));
+        rev.Add(Small("sides", "Sides personaggio...", "PDF con le sole scene di uno", (s, e) => ExportSides()));
+    }
+
+    private void BuildTabView(RibbonTab tab)
+    {
+        var views = tab.AddGroup("Viste");
+        views.Add(Big("script", "Copione", "Torna alla pagina", (s, e) => _editor.Focus()));
+        views.Add(Big("cards", "Schede scena", "Bacheca delle scene (F6)", (s, e) => ShowCards()));
+        views.Add(Big("sceneview", "Elenco scene", "Il pannello con tutte le scene", (s, e) => ShowSidePanel(0)));
+
+        var show = tab.AddGroup("Mostra");
+        show.Add(Toggle("navigator", "Pannello laterale", "Scene e note (F9)",
+            (s, e) => { if (_navItem != null) _navItem.Checked = !_navItem.Checked; }));
+        show.Add(Toggle("ruler", "Righello", "I pollici sopra la pagina",
+            (s, e) => { if (_rulerItem != null) _rulerItem.Checked = !_rulerItem.Checked; }));
+        show.Add(Toggle("breaks", "Interruzioni di pagina", "La riga tratteggiata dove cade la pagina",
+            (s, e) => { if (_breaksItem != null) _breaksItem.Checked = !_breaksItem.Checked; }));
+        show.Add(Toggle("typewriter", "Macchina da scrivere", "Tiene la riga al centro (F11)",
+            (s, e) => { if (_typewriterItem != null) _typewriterItem.Checked = !_typewriterItem.Checked; }));
+        show.Add(Toggle("askelement", "Chiedi l'elemento a ogni a capo", "Il menu che compare premendo Invio",
+            (s, e) => { if (_askElementItem != null) _askElementItem.Checked = !_askElementItem.Checked; }));
+        show.Add(Small("note", "Note del copione", "Apre l'elenco delle note", (s, e) => ShowSidePanel(1)));
+
+        var zoom = tab.AddGroup("Zoom");
+        zoom.Add(Big("zoom", "Zoom 100%", "Riporta la pagina alla misura giusta (Ctrl+0)", (s, e) => SetZoom(1f)));
+        zoom.Add(Small("zoomin", "Ingrandisci", "Ctrl + +", (s, e) => Zoom(0.1f)));
+        zoom.Add(Small("zoomout", "Riduci", "Ctrl + -", (s, e) => Zoom(-0.1f)));
+
+        _cboZoom = new ComboBox
         {
-            ToolTipText = "Evidenziatore",
-            Image = Swatch("#FFF176"),
-            DisplayStyle = ToolStripItemDisplayStyle.Image,
-            ImageScaling = ToolStripItemImageScaling.None
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            Width = 80,
+            Height = 22,
+            Font = new Font("Segoe UI", 8.25f)
         };
-        FillColorMenu(markBtn, true);
-        tool.Items.Add(markBtn);
+        foreach (var z in new[] { "75%", "90%", "100%", "110%", "125%", "150%", "175%", "200%" })
+            _cboZoom.Items.Add(z);
+        _cboZoom.SelectedIndexChanged += (s, e) =>
+        {
+            if (_loading || _cboZoom.SelectedItem == null) return;
+            var txt = _cboZoom.SelectedItem.ToString().TrimEnd('%');
+            if (int.TryParse(txt, out var pct)) SetZoom(pct / 100f);
+        };
+        zoom.Add(_cboZoom);
 
-        tool.Items.Add(new ToolStripSeparator());
+        var look = tab.AddGroup("Aspetto");
+        var themeRow1 = new RibbonRow();
+        themeRow1.Add(Toggle("paper", "Carta", "Avorio riposante: il tema di partenza", (s, e) => SetTheme("Carta")));
+        themeRow1.Add(Toggle("day", "Chiaro", "Bianco pieno", (s, e) => SetTheme("Chiaro")));
+        look.Add(themeRow1);
 
-        Btn("Schede", "Bacheca delle scene (F6)", "cards", (s, e) => ShowCards());
-        Btn("Nota", "Nota sull'elemento corrente (Ctrl+M)", "note", (s, e) => EditNote());
-        Btn("Frontespizio", "Titolo, autore, contatti (F7)", "title", (s, e) => EditTitlePage());
-        Btn("Statistiche", "Pagine, scene, battute (F8)", "stats", (s, e) => ShowReport());
-        tool.Items.Add(new ToolStripSeparator());
-        Btn("PDF", "Esporta in PDF standard (Ctrl+P)", "pdf", (s, e) => ExportPdf());
+        var themeRow2 = new RibbonRow();
+        themeRow2.Add(Toggle("sepia", "Seppia", "Tonalita' calde", (s, e) => SetTheme("Seppia")));
+        themeRow2.Add(Toggle("night", "Scuro", "Per scrivere di notte", (s, e) => SetTheme("Scuro")));
+        look.Add(themeRow2);
 
-        RefreshToolbarIcons();
-        return tool;
+        look.Add(Big("appearance", "Aspetto", "Carattere, tema, colori di ogni elemento", (s, e) => ShowAppearance()));
+    }
+
+    private void BuildTabEdit(RibbonTab tab)
+    {
+        var undo = tab.AddGroup("Annulla");
+        undo.Add(Big("undo", "Annulla", "Ctrl+Z", (s, e) => { _editor.Undo(); _editor.Focus(); }));
+        undo.Add(Big("redo", "Ripristina", "Ctrl+Y", (s, e) => { _editor.Redo(); _editor.Focus(); }));
+
+        var clip = tab.AddGroup("Appunti");
+        clip.Add(Small("cut", "Taglia", "Ctrl+X", (s, e) => { _editor.Cut(); _editor.Focus(); }));
+        clip.Add(Small("copy", "Copia", "Ctrl+C", (s, e) => { _editor.Copy(); _editor.Focus(); }));
+        clip.Add(Small("paste", "Incolla", "Ctrl+V", (s, e) => { _editor.PasteFromClipboard(); _editor.Focus(); }));
+
+        var sel = tab.AddGroup("Seleziona");
+        sel.Add(Small("selectall", "Seleziona tutto", "Ctrl+A", (s, e) => { _editor.SelectAll(); _editor.Focus(); }));
+        sel.Add(Small("selectscene", "Seleziona la scena", "Dall'intestazione alla scena dopo (Ctrl+Shift+A)",
+            (s, e) => _editor.SelectScene()));
+        sel.Add(Small("delete", "Elimina", "Cancella la selezione", (s, e) => DeleteSelection()));
+
+        var find = tab.AddGroup("Trova");
+        find.Add(Big("find", "Trova e sostituisci", "Ctrl+F", (s, e) => ShowFind()));
+        find.Add(Big("goto", "Vai a", "Salta a una scena o a una pagina (Ctrl+G)", (s, e) => GoTo()));
+        find.Add(Small("rename", "Rinomina personaggio...", "In tutto il copione", (s, e) => RenameCharacter(null)));
+        find.Add(Small("castlist", "Elenco personaggi...", "F4", (s, e) => ShowCastList()));
+
+        var rev = tab.AddGroup("Revisione");
+        rev.Add(Big("revision", "Revisione", "Colore bozza e asterischi", (s, e) => ShowRevision()));
+        rev.Add(Small("track", "Righe cambiate", "Quante righe sono cambiate dall'ultima bozza",
+            (s, e) => ShowRevisionSummary()));
+        rev.Add(Small("numbers", "Numeri di scena", "Blocca la numerazione", (s, e) => LockSceneNumbers(true)));
+        rev.Add(Small("stats", "Statistiche", "F8", (s, e) => ShowReport()));
+    }
+
+    /// <summary>Pulsante piccolo a interruttore (resta acceso quando la cosa e' attiva).</summary>
+    private RibbonButton Toggle(string key, string text, string tip, EventHandler onClick)
+    {
+        var b = Small(key, text, tip, onClick);
+        b.IsToggle = true;
+        return b;
     }
 
     private void WireEvents()
@@ -557,8 +974,11 @@ public sealed class MainForm : Form
         Shown += (s, e) =>
         {
             try { _split.SplitterDistance = 260; } catch { }
+            _ribbon?.ApplyTheme(_theme);
+            _ribbon?.Relayout();
             LayoutPage();
             _editor.ApplyPageWidth();
+            SyncRibbonToggles();
             _editor.Focus();
 
             // il controllo aggiornamenti parte staccato dall'avvio: se la rete
@@ -616,7 +1036,21 @@ public sealed class MainForm : Form
     {
         int w = Math.Min(_editor.PageWidthPixels + _page.Padding.Horizontal, _pageHost.ClientSize.Width);
         int x = Math.Max(0, (_pageHost.ClientSize.Width - w) / 2);
-        _page.Bounds = new Rectangle(x, 0, w, _pageHost.ClientSize.Height);
+
+        int top = 0;
+        // durante la costruzione Visible e' falso comunque (la finestra non c'e' ancora):
+        // si guarda l'impostazione, non lo stato del controllo
+        if (_settings.ShowRuler)
+        {
+            _ruler.Bounds = new Rectangle(0, 0, _pageHost.ClientSize.Width, _ruler.Height);
+            top = _ruler.Height;
+
+            float scale = _editor.DeviceDpi * _editor.ZoomFactor;
+            _ruler.Update(x, w, x + _page.Padding.Left, scale,
+                          _ruler.MarkerLeftInch, _ruler.MarkerRightInch);
+        }
+
+        _page.Bounds = new Rectangle(x, top, w, Math.Max(0, _pageHost.ClientSize.Height - top));
     }
 
     private void Zoom(float delta) => SetZoom(_editor.ZoomFactor + delta);
@@ -626,6 +1060,18 @@ public sealed class MainForm : Form
         _editor.ZoomFactor = Math.Max(0.6f, Math.Min(2.5f, z));
         _editor.ApplyPageWidth();
         LayoutPage();
+
+        if (_cboZoom != null)
+        {
+            bool saved = _loading;
+            _loading = true;
+            try
+            {
+                var pct = (int)Math.Round(_editor.ZoomFactor * 100) + "%";
+                _cboZoom.SelectedItem = _cboZoom.Items.Contains(pct) ? pct : null;
+            }
+            finally { _loading = saved; }
+        }
     }
 
     private void ApplyAppearance()
@@ -652,12 +1098,50 @@ public sealed class MainForm : Form
         _editor.SetElementColors(colors);
         if (!string.Equals(_editor.Font.Name, _settings.FontFamily, StringComparison.OrdinalIgnoreCase))
             _editor.SetEditorFont(_settings.FontFamily);
-        RefreshToolbarIcons();
+
+        _ribbon?.ApplyTheme(_theme);
+        _ruler.ApplyTheme(_theme);
+        _ruler.Visible = _settings.ShowRuler;
+
         _editor.TypewriterMode = _settings.Typewriter;
         _editor.AskElementOnEnter = _settings.AskElementOnEnter;
+
+        SyncRibbonToggles();
         LayoutPage();
         _pageHost.Invalidate();
         _page.Invalidate();
+    }
+
+    /// <summary>Allinea le spunte della barra a quello che dicono le impostazioni.</summary>
+    private void SyncRibbonToggles()
+    {
+        if (_ribbon == null) return;
+
+        _ribbon.SetChecked("navigator", _settings.ShowNavigator);
+        _ribbon.SetChecked("ruler", _settings.ShowRuler);
+        _ribbon.SetChecked("typewriter", _settings.Typewriter);
+        _ribbon.SetChecked("breaks", _settings.ShowPageBreaks);
+        _ribbon.SetChecked("askelement", _settings.AskElementOnEnter);
+
+        _ribbon.SetChecked("paper", _theme.Name == "Carta");
+        _ribbon.SetChecked("day", _theme.Name == "Chiaro");
+        _ribbon.SetChecked("sepia", _theme.Name == "Seppia");
+        _ribbon.SetChecked("night", _theme.Name == "Scuro");
+
+        bool saved = _loading;
+        _loading = true;
+        try
+        {
+            if (_cboFont != null && _cboFont.Items.Contains(_settings.FontFamily))
+                _cboFont.SelectedItem = _settings.FontFamily;
+
+            if (_cboZoom != null)
+            {
+                var pct = (int)Math.Round(_editor.ZoomFactor * 100) + "%";
+                _cboZoom.SelectedItem = _cboZoom.Items.Contains(pct) ? pct : null;
+            }
+        }
+        finally { _loading = saved; }
     }
 
     // ------------------------------------------------------------------ DOCUMENTO
@@ -877,6 +1361,7 @@ public sealed class MainForm : Form
         using var opt = new PdfOptionsForm(_settings.ToPageSetup());
         if (opt.ShowDialog(this) != DialogResult.OK || opt.Setup == null) return;
         _settings.FromPageSetup(opt.Setup);
+        MarkStats();
 
         using var dlg = new SaveFileDialog
         {
@@ -1182,7 +1667,10 @@ public sealed class MainForm : Form
             foreach (var el in els)
             {
                 offsets.Add(pos);
-                pos += (el.Text != null ? DraftLite.Model.StyledText.Plain(el.Text).Length : 0) + 1;
+                int n = el.Text != null ? DraftLite.Model.StyledText.Plain(el.Text).Length : 0;
+                // nel testo dell'editor la battuta simultanea finisce con " ^"
+                if (el.Type == ElementType.Character && el.Dual) n += 2;
+                pos += n + 1;
             }
 
             // Paginate lavora sugli elementi non vuoti: serve la corrispondenza con i paragrafi
@@ -1224,7 +1712,8 @@ public sealed class MainForm : Form
         try
         {
             int idx = ElementStyle.All.ToList().FindIndex(x => x.Type == type);
-            if (idx >= 0 && _cboType.SelectedIndex != idx) _cboType.SelectedIndex = idx;
+            if (idx >= 0 && _cboElement != null && _cboElement.SelectedIndex != idx)
+                _cboElement.SelectedIndex = idx;
         }
         finally { _loading = savedLoading; }
 
@@ -1233,6 +1722,36 @@ public sealed class MainForm : Form
         _lblScene.Text = scene.Number > 0
             ? "Scena " + scene.Number + ": " + Truncate(scene.Text, 34)
             : "";
+
+        RefreshRibbonState(type);
+    }
+
+    /// <summary>
+    /// Accende i pulsanti che corrispondono a quello che c'e' sotto il cursore:
+    /// grassetto, corsivo, sottolineato, dialogo simultaneo. E sposta gli indicatori
+    /// del righello sui rientri dell'elemento corrente.
+    /// </summary>
+    private void RefreshRibbonState(ElementType type)
+    {
+        if (_ribbon == null) return;
+
+        try
+        {
+            var (b, i, u) = _editor.CurrentStyles();
+            _ribbon.SetChecked("bold", b);
+            _ribbon.SetChecked("italic", i);
+            _ribbon.SetChecked("underline", u);
+            _ribbon.SetChecked("dual", _editor.IsDualAtCaret);
+        }
+        catch { /* lo stato dei pulsanti non vale un errore */ }
+
+        if (_settings.ShowRuler)
+        {
+            var st = ElementStyle.Get(type);
+            _ruler.MarkerLeftInch = st.LeftInch;
+            _ruler.MarkerRightInch = st.LeftInch + st.WidthInch;
+            _ruler.Invalidate();
+        }
     }
 
     private static string Truncate(string s, int n)
@@ -1297,6 +1816,7 @@ public sealed class MainForm : Form
 
         if (_typewriterItem != null) _typewriterItem.Checked = dlg.Typewriter;
         if (_askElementItem != null) _askElementItem.Checked = dlg.AskElement;
+        if (_breaksItem != null) _breaksItem.Checked = dlg.PageBreaks;
 
         SetZoom(dlg.SelectedZoom);
         ApplyAppearance();
@@ -1402,6 +1922,228 @@ public sealed class MainForm : Form
         MarkStats();
     }
 
+    // ------------------------------------------------------------------ COMANDI NUOVI (1.5)
+
+    private void DeleteSelection()
+    {
+        if (_editor.SelectionLength == 0) return;
+        _editor.DeleteSelection();
+        SetDirty(true);
+        _editor.Focus();
+    }
+
+    private void ShowSidePanel(int tab)
+    {
+        if (_navItem != null && !_navItem.Checked) _navItem.Checked = true;
+        else _split.Panel1Collapsed = false;
+
+        if (tab >= 0 && tab < _sideTabs.TabPages.Count) _sideTabs.SelectedIndex = tab;
+        _sideTabs.Focus();
+    }
+
+    private void SetTheme(string name)
+    {
+        _settings.ThemeName = name;
+        ApplyAppearance();
+        _settings.Save();
+        _editor.Focus();
+    }
+
+    /// <summary>Riga di soli "=" : da li' in poi si stampa su una pagina nuova.</summary>
+    private void InsertPageBreak()
+    {
+        _editor.InsertElement(ElementType.Action, Screenplay.PageBreakMark);
+        _editor.InsertElement(ElementType.Action, string.Empty);
+        SetDirty(true);
+        MarkStats();
+    }
+
+    private void GoTo()
+    {
+        RefreshScenes();
+        RefreshStats();
+        int pages = Math.Max(1, _pageBreaks.Count);
+        using var dlg = new GoToForm(_scenes.Count, pages);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        if (dlg.ByScene)
+        {
+            int i = dlg.Number - 1;
+            if (i < 0 || i >= _scenes.Count)
+            {
+                MessageBox.Show(this, "Quella scena non c'e'.", "DraftLite",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            _editor.GoToCharIndex(_scenes[i].CharIndex, true);
+            return;
+        }
+
+        var target = _pageBreaks.FirstOrDefault(b => b.Page == dlg.Number);
+        if (dlg.Number <= 1) _editor.GoToCharIndex(0, true);
+        else if (target.Page == dlg.Number) _editor.GoToCharIndex(target.CharIndex, true);
+        else
+            MessageBox.Show(this, "Quella pagina non c'e' ancora.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>
+    /// Cambia un nome di personaggio in tutto il copione: le righe Personaggio
+    /// e, se richiesto, anche le sue comparse dentro azioni e dialoghi.
+    /// </summary>
+    private void RenameCharacter(string preselect)
+    {
+        var sp = CurrentScreenplay();
+        var names = sp.CharacterNames();
+        if (names.Count == 0)
+        {
+            MessageBox.Show(this, "Nel copione non c'e' ancora nessun personaggio.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new RenameCharacterForm(names, preselect);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        var from = dlg.OldName;
+        var to = dlg.NewName;
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to) ||
+            string.Equals(from, to, StringComparison.Ordinal)) return;
+
+        var els = _editor.GetElements();
+        int changed = 0;
+
+        foreach (var el in els)
+        {
+            if (el.Type == ElementType.Character)
+            {
+                var plain = StyledText.Plain(el.Text);
+                var name = Screenplay.NormalizeCharacterName(plain);
+                if (!string.Equals(name, from, StringComparison.OrdinalIgnoreCase)) continue;
+
+                // il nome sta in testa: si sostituisce solo quello, le estensioni restano
+                int at = plain.IndexOf(from, StringComparison.OrdinalIgnoreCase);
+                if (at < 0) continue;
+                el.Text = plain.Substring(0, at) + to + plain.Substring(at + from.Length);
+                changed++;
+            }
+            else if (dlg.AlsoInText)
+            {
+                var replaced = ReplaceWord(el.Text, from, to);
+                if (!ReferenceEquals(replaced, el.Text)) { el.Text = replaced; changed++; }
+            }
+        }
+
+        if (changed == 0)
+        {
+            MessageBox.Show(this, "Non ho trovato niente da cambiare.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        _editor.SetElements(els, false);
+        SetDirty(true);
+        RefreshScenes();
+        RefreshNotes();
+        MarkStats();
+        _editor.Focus();
+    }
+
+    /// <summary>Sostituisce il nome solo quando e' parola intera (MARTA si', MARTANO no).</summary>
+    private static string ReplaceWord(string text, string from, string to)
+    {
+        if (string.IsNullOrEmpty(text) || text.IndexOf(from, StringComparison.OrdinalIgnoreCase) < 0)
+            return text;
+
+        var pattern = @"(?<![\p{L}\p{N}])" + System.Text.RegularExpressions.Regex.Escape(from) + @"(?![\p{L}\p{N}])";
+
+        // il nome nuovo va messo cosi' com'e': "$" nella sostituzione sarebbe un riferimento,
+        // e *, _, { farebbero da marcatori di stile al prossimo giro di lettura
+        var literal = to.Replace("$", "$$");
+        foreach (var ch in new[] { "*", "_", "{" })
+            literal = literal.Replace(ch, "\\" + ch);
+
+        return System.Text.RegularExpressions.Regex.Replace(text, pattern, literal,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    }
+
+    private void ShowCastList()
+    {
+        var stats = ScreenplayStats.Compute(CurrentScreenplay(), _settings.ToPageSetup());
+        if (stats.Characters.Count == 0)
+        {
+            MessageBox.Show(this, "Nel copione non c'e' ancora nessun personaggio.", "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        string rename = null, sides = null;
+        using (var dlg = new CastListForm(stats, _theme))
+        {
+            dlg.ShowDialog(this);
+            rename = dlg.RenameRequested;
+            sides = dlg.SidesRequested;
+        }
+
+        if (rename != null) RenameCharacter(rename);
+        else if (sides != null) ExportSidesFor(sides);
+    }
+
+    private void ExportSidesFor(string character)
+    {
+        using var dlg = new SaveFileDialog
+        {
+            Filter = "PDF (*.pdf)|*.pdf",
+            FileName = SafeFileName("sides - " + character) + ".pdf",
+            InitialDirectory = Directory.Exists(_settings.LastFolder) ? _settings.LastFolder : null
+        };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+        try
+        {
+            PdfExporter.ExportSides(dlg.FileName, CurrentScreenplay(), character, _settings.ToPageSetup());
+            OfferOpen(dlg.FileName, "Sides di " + character + " creati.");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Export non riuscito:\n\n" + ex.Message, "DraftLite",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    /// <summary>Quanto e' cambiato dall'ultima bozza congelata.</summary>
+    private void ShowRevisionSummary()
+    {
+        var sp = CurrentScreenplay();
+        int changed = sp.Revision.MarkChanged(sp.Compacted()).Count(x => x);
+
+        MessageBox.Show(this,
+            _revision.Active
+                ? "Bozza " + _revision.Color + (string.IsNullOrWhiteSpace(_revision.Date) ? "" : " del " + _revision.Date) +
+                  ".\r\n\r\nRighe cambiate dall'ultimo blocco: " + changed + ".\r\n" +
+                  "Nel PDF hanno l'asterisco al margine."
+                : "La revisione non e' attiva.\r\n\r\nAprila da Revisione per congelare la bozza\r\n" +
+                  "e far comparire gli asterischi sulle righe cambiate.",
+            "Revisione", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    /// <summary>I rientri non si toccano a mano: li decide il tipo di elemento.</summary>
+    private void ShowElementInfo()
+    {
+        var st = ElementStyle.Get(_editor.CurrentType);
+        MessageBox.Show(this,
+            st.Name + "\r\n\r\n" +
+            "Rientro sinistro: " + st.LeftInch.ToString("0.##") + "\"\r\n" +
+            "Larghezza: " + st.WidthInch.ToString("0.##") + "\"\r\n" +
+            "Righe vuote prima: " + st.SpaceBeforeLines + "\r\n" +
+            (st.UpperCase ? "Tutto maiuscolo\r\n" : "") +
+            (st.RightAlign ? "Allineato a destra\r\n" : "") +
+            "\r\nQuesti valori sono lo standard della sceneggiatura: valgono uguali\r\n" +
+            "a video e nel PDF, e non vanno cambiati a mano.\r\n" +
+            "Colore e carattere si scelgono da Aspetto.",
+            "Rientri dell'elemento", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
     private void ShowShortcuts()
     {
         MessageBox.Show(this,
@@ -1419,13 +2161,19 @@ public sealed class MainForm : Form
             "  Andando a capo compare il menu degli elementi: frecce o numeri 1-6,\r\n" +
             "  Invio conferma, oppure si continua a scrivere e sparisce.\r\n\r\n" +
             "TESTO\r\n" +
-            "  Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato\r\n\r\n" +
+            "  Ctrl+B grassetto   Ctrl+I corsivo   Ctrl+U sottolineato\r\n" +
+            "  Shift+F3  MAIUSCOLO / minuscolo / Iniziali\r\n\r\n" +
             "FILE\r\n" +
             "  Ctrl+N nuovo   Ctrl+O apri   Ctrl+S salva   Ctrl+P esporta PDF\r\n\r\n" +
+            "SELEZIONE E SPOSTAMENTI\r\n" +
+            "  Ctrl+A tutto   Ctrl+Shift+A la scena   Ctrl+G vai a scena o pagina\r\n" +
+            "  Ctrl+F trova e sostituisci\r\n\r\n" +
+            "INSERIMENTI\r\n" +
+            "  Ctrl+Shift+N nuova scena   Ctrl+Invio interruzione di pagina\r\n\r\n" +
             "ALTRO\r\n" +
-            "  F6 schede scena   F7 frontespizio   F8 statistiche\r\n" +
-            "  F9 pannello laterale   F11 macchina da scrivere\r\n" +
-            "  Ctrl+M nota sull'elemento   Ctrl+F trova   Ctrl+ +/- zoom\r\n\r\n" +
+            "  F4 elenco personaggi   F6 schede scena   F7 frontespizio\r\n" +
+            "  F8 statistiche   F9 pannello laterale   F11 macchina da scrivere\r\n" +
+            "  Ctrl+M nota sull'elemento   Ctrl+ +/- zoom   Ctrl+0 zoom 100%\r\n\r\n" +
             "SUGGERIMENTI\r\n" +
             "  Scrivendo INT. o EST. in un'azione, la riga diventa una scena.\r\n" +
             "  Nei nomi personaggio e nelle scene compare l'elenco di quelli gia' usati:\r\n" +

@@ -85,6 +85,14 @@ public static class Paginator
             var e = els[i];
             currentElement = i;
 
+            // ---- interruzione di pagina forzata (riga di soli "=", come in Fountain)
+            if (Screenplay.IsPageBreak(e))
+            {
+                if (row > 0) NewPage();
+                i++;
+                continue;
+            }
+
             // ---- battuta: personaggio + parentetiche + dialogo
             if (e.Type == ElementType.Character)
             {

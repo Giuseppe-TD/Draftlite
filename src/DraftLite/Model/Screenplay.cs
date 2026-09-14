@@ -29,6 +29,17 @@ public sealed class Screenplay
     public static bool LooksLikeSceneHeading(string text)
         => !string.IsNullOrWhiteSpace(text) && SceneHeadingPattern.IsMatch(text);
 
+    /// <summary>Riga che forza il salto pagina: tre o piu' "=", la convenzione di Fountain.</summary>
+    public const string PageBreakMark = "===";
+
+    /// <summary>Vero se l'elemento e' un'interruzione di pagina voluta dall'autore.</summary>
+    public static bool IsPageBreak(ScreenElement e)
+    {
+        if (e == null || e.Type != ElementType.Action) return false;
+        var t = StyledText.Plain(e.Text).Trim();
+        return t.Length >= 3 && t.All(c => c == '=');
+    }
+
     /// <summary>Elementi senza le righe vuote, pronti per export/paginazione.</summary>
     public List<ScreenElement> Compacted()
         => Elements.Where(e => !e.IsEmpty).Select(e => e.Clone()).ToList();
@@ -137,11 +148,15 @@ public sealed class Screenplay
         return seen;
     }
 
-    /// <summary>Toglie estensioni tipo (CONT'D), (V.O.), (F.C.) dal nome personaggio.</summary>
+    /// <summary>
+    /// Toglie estensioni tipo (CONT'D), (V.O.), (F.C.) dal nome personaggio, e anche
+    /// i marcatori di stile: il nome deve venire fuori uguale sia che sia stato scritto
+    /// normale sia che qualcuno l'abbia messo in corsivo.
+    /// </summary>
     public static string NormalizeCharacterName(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
-        var s = text.Trim().TrimEnd('^').Trim();
+        var s = StyledText.Plain(text).Trim().TrimEnd('^').Trim();
         int p = s.IndexOf('(');
         if (p > 0) s = s.Substring(0, p);
         return s.Trim();

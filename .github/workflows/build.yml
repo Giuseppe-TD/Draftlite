@@ -92,7 +92,7 @@ jobs:
           $root = "${{ steps.paths.outputs.root }}"
           $versionFile = Join-Path $root "Directory.Build.props"
           [xml]$xml = Get-Content $versionFile -Raw
-          $node = @($xml.Project.PropertyGroup.Version)[0]
+          $node = $xml.SelectSingleNode("/Project/PropertyGroup/Version")
           if ($null -eq $node) { throw "Nodo <Version> non trovato in Directory.Build.props" }
           $node.InnerText = "${{ steps.ver.outputs.numeric }}"
 

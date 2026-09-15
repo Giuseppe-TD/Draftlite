@@ -56,30 +56,35 @@ jobs:
           $ref  = "${{ github.ref }}"
           $rtag = "${{ github.event.release.tag_name }}"
 
-          # la versione di riferimento e' quella scritta nel csproj: un posto solo
-          # da aggiornare, cosi' installer ed eseguibile non possono divergere
-          $base = '0.0.0'
-          $csprojPath = "${{ steps.paths.outputs.csproj }}"
-          if (Test-Path $csprojPath) {
-            $m = Select-String -Path $csprojPath -Pattern '<Version>\s*([^<]+?)\s*</Version>' |
-                 Select-Object -First 1
-            if ($m) { $base = $m.Matches[0].Groups[1].Value }
-          }
-          Write-Host "Versione nel csproj: $base"
+          # Directory.Build.props e' l'unica sorgente del numero di versione.
+          # Eseguibile, About, updater, installer e release usano tutti questo valore.
+          $root = "${{ steps.paths.outputs.root }}"
+          $versionFile = Join-Path $root "Directory.Build.props"
+          if (-not (Test-Path $versionFile)) { throw "Directory.Build.props non trovato: $versionFile" }
+          [xml]$versionXml = Get-Content $versionFile -Raw
+          $base = [string](@($versionXml.Project.PropertyGroup.Version)[0])
+          $base = $base.Trim()
+          if ($base -notmatch '^\d+\.\d+\.\d+$') { throw "Versione non valida in Directory.Build.props: $base" }
 
+          # Se si pubblica un tag/release, deve coincidere con la versione del progetto.
+          $tagVersion = $null
           if (-not [string]::IsNullOrEmpty($rtag)) {
-            $v = $rtag -replace '^[vV]',''            # release creata dal sito
+            $tagVersion = $rtag -replace '^[vV]',''
           } elseif ($ref -like 'refs/tags/*') {
-            $v = ($ref -replace '^refs/tags/','') -replace '^[vV]',''
+            $tagVersion = (($ref -replace '^refs/tags/','') -replace '^[vV]','')
+          }
+          if ($tagVersion -and $tagVersion -ne $base) {
+            throw "Il tag/release e' $tagVersion ma Directory.Build.props contiene $base. Aggiorna la versione prima di pubblicare."
+          }
+
+          if ($tagVersion) {
+            $v = $base
           } else {
             $v = "$base-dev.${{ github.run_number }}"
           }
-          $num = ($v -split '-')[0]
-          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = $base }
-          if ($num -notmatch '^\d+\.\d+\.\d+$') { $num = '0.0.0' }
-          "version=$v"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "numeric=$num"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Versione: $v (assembly $num)"
+          "version=$v"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "numeric=$base" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Versione: $v (assembly/file/installer $base)"
 
       - name: Restore
         run: dotnet restore "${{ steps.paths.outputs.csproj }}"
@@ -130,10 +135,19 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-          # nomi senza numero di versione: cosi' il link di download resta sempre lo stesso
+          # Manteniamo sia i nomi stabili (per i link /latest/download) sia quelli
+          # versionati, cosi' dal file scaricato si vede subito quale build e'.
           $root = "${{ steps.paths.outputs.root }}"
-          Copy-Item (Join-Path $root "installer\Output\*.exe") dist\DraftLite-Setup.exe
-          Copy-Item (Join-Path $root "publish\DraftLite.exe")   dist\DraftLite-Portabile.exe
+          $ver = "${{ steps.ver.outputs.numeric }}"
+          $setupSource = Get-ChildItem (Join-Path $root "installer\Output\*.exe") | Select-Object -First 1
+          $portableSource = Join-Path $root "publish\DraftLite.exe"
+          if (-not $setupSource) { throw "Installer non trovato per preparare la release" }
+          if (-not (Test-Path $portableSource)) { throw "Eseguibile portabile non trovato" }
+
+          Copy-Item $setupSource.FullName dist\DraftLite-Setup.exe
+          Copy-Item $setupSource.FullName ("dist\DraftLite-Setup-{0}.exe" -f $ver)
+          Copy-Item $portableSource dist\DraftLite-Portabile.exe
+          Copy-Item $portableSource ("dist\DraftLite-Portabile-{0}.exe" -f $ver)
 
           $notes = @()
           $notes += "**DraftLite-Setup.exe** - installazione normale: collegamenti, associazione dei file .dlite, disinstallazione dal Pannello di controllo."

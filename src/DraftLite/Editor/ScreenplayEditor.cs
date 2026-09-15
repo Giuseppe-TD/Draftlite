@@ -170,14 +170,48 @@ public sealed class ScreenplayEditor : RichTextBox
         _chooser.BringToFront();
     }
 
-    /// <summary>Larghezza di riga = 6 pollici, come sulla pagina stampata (60 caratteri).</summary>
+    /// <summary>Larghezza di riga ricavata dalla geometria del documento.</summary>
+    public DocumentLayout DocumentLayout { get; set; } = new DocumentLayout();
+
+    public void ChangeDocumentLayout(DocumentLayout layout)
+    {
+        // Leggere i tipi prima di cambiare le metriche usate per riconoscerli.
+        var elements = GetElements();
+        var starts = new List<int>();
+        string text = Text;
+        starts.Add(0);
+        for (int i = 0; i < text.Length; i++)
+            if (text[i] == '\n') starts.Add(i + 1);
+        int start = SelectionStart, length = SelectionLength;
+        bool saved = _internal;
+        _internal = true;
+        SuspendDrawing();
+        try
+        {
+            DocumentLayout = layout;
+            for (int i = 0; i < elements.Count && i < starts.Count; i++)
+            {
+                Select(starts[i], 0);
+                SetParaFormat(layout.Style(elements[i].Type));
+            }
+            ApplyPageWidth();
+        }
+        finally
+        {
+            Select(start, length);
+            _internal = saved;
+            ResumeDrawing();
+        }
+        RaiseTypeChanged(true);
+    }
+
     public void ApplyPageWidth()
     {
         if (!IsHandleCreated) return;
-        // La larghezza di riga si imposta direttamente in twip (6" = 8640):
+        // La larghezza di riga si imposta direttamente in twip:
         // RichTextBox.RightMargin vorrebbe pixel e li converte con il DPI del display,
         // che su schermi scalati non e' quello del controllo.
-        int twips = (int)Math.Round(ElementStyle.TextWidthInch * ElementStyle.TwipsPerInch);
+        int twips = (int)Math.Round(DocumentLayout.TextWidth * ElementStyle.TwipsPerInch);
         NativeMethods.SendMessage(Handle, NativeMethods.EM_SETTARGETDEVICE, IntPtr.Zero, (IntPtr)twips);
     }
 
@@ -217,7 +251,7 @@ public sealed class ScreenplayEditor : RichTextBox
         }
     }
 
-    public int PageWidthPixels => (int)Math.Round((ElementStyle.TextWidthInch + 0.45) * DeviceDpi * ZoomFactor);
+    public int PageWidthPixels => (int)Math.Round((DocumentLayout.TextWidth + 0.05) * DeviceDpi * ZoomFactor);
 
     // ------------------------------------------------------------------ TIPI
 
@@ -245,21 +279,23 @@ public sealed class ScreenplayEditor : RichTextBox
             (IntPtr)NativeMethods.SCF_SELECTION, ref pf);
     }
 
-    private static ElementType TypeFromParaFormat(PARAFORMAT2 pf)
+    private ElementType TypeFromParaFormat(PARAFORMAT2 pf)
     {
-        if (pf.wAlignment == NativeMethods.PFA_RIGHT) return ElementType.Transition;
-
-        int ind = pf.dxStartIndent;
-        const int tol = 120;
-
-        if (Math.Abs(ind - ElementStyle.Get(ElementType.Character).LeftTwips) < tol) return ElementType.Character;
-        if (Math.Abs(ind - ElementStyle.Get(ElementType.Parenthetical).LeftTwips) < tol) return ElementType.Parenthetical;
-        if (Math.Abs(ind - ElementStyle.Get(ElementType.Dialogue).LeftTwips) < tol) return ElementType.Dialogue;
-
-        if (ind < tol)
-            return pf.dySpaceBefore >= 360 ? ElementType.SceneHeading : ElementType.Action;
-
-        return ElementType.Action;
+        // Considerare anche larghezza e spaziatura: nei modelli FDX piu' tipi
+        // possono avere lo stesso rientro sinistro.
+        ElementType best = ElementType.Action;
+        long distance = long.MaxValue;
+        foreach (var type in ElementStyle.TabCycle)
+        {
+            var style = DocumentLayout.Style(type);
+            bool right = pf.wAlignment == NativeMethods.PFA_RIGHT;
+            long score = Math.Abs((long)pf.dxStartIndent - style.LeftTwips) +
+                Math.Abs((long)pf.dxRightIndent - style.RightTwips) +
+                Math.Abs((long)pf.dySpaceBefore - style.SpaceBeforeTwips) +
+                (right == style.RightAlign ? 0 : 100000);
+            if (score < distance) { distance = score; best = type; }
+        }
+        return best;
     }
 
     public ElementType CurrentType
@@ -342,7 +378,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
         ApplyTypeToParagraph(start, t.Substring(start, end - start), type, convertCase);
 
-        var st = ElementStyle.Get(type);
+        var st = DocumentLayout.Style(type);
         Select(Math.Min(caret, TextLength), 0);
         SelectionFont = st.Bold ? _fontBold : _fontNormal;
         if (_elementColors.TryGetValue(type, out var caretColor)) SelectionColor = caretColor;
@@ -350,7 +386,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
     private void ApplyTypeToParagraph(int start, string text, ElementType type, bool convertCase)
     {
-        var st = ElementStyle.Get(type);
+        var st = DocumentLayout.Style(type);
 
         if (convertCase && st.UpperCase)
         {
@@ -436,7 +472,7 @@ public sealed class ScreenplayEditor : RichTextBox
                 var readable = dual ? line.TrimEnd().TrimEnd('^').TrimEnd() : line;
 
                 _readingType = type;
-                var el = new ScreenElement(type, ReadStyledText(pos, readable, ElementStyle.Get(type).Bold))
+                var el = new ScreenElement(type, ReadStyledText(pos, readable, DocumentLayout.Style(type).Bold))
                 {
                     Dual = dual
                 };
@@ -637,12 +673,12 @@ public sealed class ScreenplayEditor : RichTextBox
     }
 
     /// <summary>Testo dei paragrafi come finisce davvero nel controllo (dual compreso).</summary>
-    private static List<string> BuildKeys(IList<ScreenElement> els)
+    private List<string> BuildKeys(IList<ScreenElement> els)
     {
         var keys = new List<string>(els.Count);
         foreach (var e in els)
         {
-            var st = ElementStyle.Get(e.Type);
+            var st = DocumentLayout.Style(e.Type);
             var text = StyledText.Plain(e.Text ?? string.Empty);
             if (st.UpperCase) text = text.ToUpperInvariant();
             if (e.Type == ElementType.Character && e.Dual) text += " ^";
@@ -671,7 +707,7 @@ public sealed class ScreenplayEditor : RichTextBox
         for (int i = 0; i < els.Count; i++)
         {
             var e = els[i];
-            var st = ElementStyle.Get(e.Type);
+            var st = DocumentLayout.Style(e.Type);
             var text = e.Text ?? string.Empty;
             bool plainOnly = st.UpperCase;
             if (plainOnly) text = StyledText.Plain(text).ToUpperInvariant();
@@ -808,7 +844,7 @@ public sealed class ScreenplayEditor : RichTextBox
             {
                 if (!text.Contains('\n'))
                 {
-                    var st0 = ElementStyle.Get(CurrentType);
+                    var st0 = DocumentLayout.Style(CurrentType);
                     SelectedText = st0.UpperCase ? text.ToUpperInvariant() : text;
                     return true;
                 }
@@ -977,7 +1013,7 @@ public sealed class ScreenplayEditor : RichTextBox
         if (_chooser.Visible && !char.IsControl(e.KeyChar)) HideChooser();
         if (!char.IsControl(e.KeyChar))
         {
-            var st = ElementStyle.Get(CurrentType);
+            var st = DocumentLayout.Style(CurrentType);
             if (st.UpperCase) e.KeyChar = char.ToUpper(e.KeyChar, CultureInfo.CurrentCulture);
         }
         base.OnKeyPress(e);
@@ -1428,7 +1464,7 @@ public sealed class ScreenplayEditor : RichTextBox
         }
 
         var type = TypeFromParaFormat(GetParaFormat());
-        var st = ElementStyle.Get(type);
+        var st = DocumentLayout.Style(type);
         SelectionFont = st.Bold ? _fontBold : _fontNormal;
         if (_elementColors.TryGetValue(type, out var color)) SelectionColor = color;
     }
@@ -1816,7 +1852,7 @@ public sealed class ScreenplayEditor : RichTextBox
         if (end <= start) return;
 
         var type = CurrentType;
-        var st = ElementStyle.Get(type);
+        var st = DocumentLayout.Style(type);
         int caret = SelectionStart;
 
         bool saved = _internal;
@@ -1995,7 +2031,7 @@ public sealed class ScreenplayEditor : RichTextBox
 
             bool On(uint mask) => (cur.dwMask & mask) != 0 && (cur.dwEffects & mask) != 0;
 
-            bool baseBold = ElementStyle.Get(CurrentType).Bold;
+            bool baseBold = DocumentLayout.Style(CurrentType).Bold;
             return (On(NativeMethods.CFM_BOLD) && !baseBold,
                     On(NativeMethods.CFM_ITALIC),
                     On(NativeMethods.CFM_UNDERLINE));

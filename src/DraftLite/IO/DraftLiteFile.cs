@@ -29,7 +29,8 @@ public static class DraftLiteFile
     private sealed class Dto
     {
         public string Format { get; set; } = "draftlite";
-        public int Version { get; set; } = 2;
+        public int Version { get; set; } = 3;
+        public DocumentLayout Layout { get; set; }
         public string Generator { get; set; } = "DraftLite";
         public TitlePage TitlePage { get; set; } = new TitlePage();
         public Revision Revision { get; set; } = new Revision();
@@ -40,6 +41,7 @@ public static class DraftLiteFile
     {
         var dto = new Dto
         {
+            Layout = sp.Layout,
             TitlePage = sp.TitlePage,
             Revision = sp.Revision,
             Elements = sp.Elements
@@ -56,10 +58,12 @@ public static class DraftLiteFile
 
         var sp = new Screenplay
         {
+            Layout = dto.Layout,
             TitlePage = dto.TitlePage ?? new TitlePage(),
             Revision = dto.Revision ?? new Revision(),
             Elements = dto.Elements ?? new List<ScreenElement>()
         };
+        sp.Layout?.Normalize();
         foreach (var e in sp.Elements)
             e.Text ??= string.Empty;
         return sp;

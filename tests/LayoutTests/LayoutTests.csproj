@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>disable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/DraftLite/Model/*.cs" Link="Model/%(Filename)%(Extension)" />
+    <Compile Include="../../src/DraftLite/IO/FdxIO.cs" />
+    <Compile Include="../../src/DraftLite/IO/DraftLiteFile.cs" />
+    <Compile Include="../../src/DraftLite/IO/PageSetup.cs" />
+    <Compile Include="../../src/DraftLite/IO/Paginator.cs" />
+  </ItemGroup>
+</Project>

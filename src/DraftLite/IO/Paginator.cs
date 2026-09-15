@@ -14,6 +14,7 @@ public sealed class LayoutLine
     public int Row;            // riga 0-based dentro la pagina
     public int Col;            // colonna 0-based in caratteri dal margine sinistro
     public bool Bold;
+    public double RightInch;
     public bool RightAlign;    // allineata al margine destro (transizioni)
     public string SceneNumber; // numero scena da stampare ai lati, se richiesto
     public bool Revised;       // riga cambiata dall'ultima bozza: asterisco a margine
@@ -71,6 +72,7 @@ public static class Paginator
                 Col = colOverride ?? st.Col,
                 Bold = st.Bold,
                 RightAlign = st.RightAlign && colOverride == null,
+                RightInch = st.LeftInch + st.WidthInch,
                 SceneNumber = sceneNumber,
                 Revised = rev
             });
@@ -131,7 +133,7 @@ public static class Paginator
             }
 
             // ---- elemento semplice
-            var style = ElementStyle.Get(e.Type);
+            var style = (sp.Layout ?? new DocumentLayout()).Style(e.Type);
             var wrapped = StyledText.Wrap(e.Text, style.Cols);
             int space = row == 0 ? 0 : style.SpaceBeforeLines;
             int keepWith = e.Type == ElementType.SceneHeading ? 2 : 0;
@@ -163,14 +165,14 @@ public static class Paginator
         // ------------------------------------------------------------------
         void EmitDialogue(List<ScreenElement> group, List<bool> groupRev)
         {
-            var chStyle = ElementStyle.Get(ElementType.Character);
+            var chStyle = (sp.Layout ?? new DocumentLayout()).Style(ElementType.Character);
             string name = StyledText.Plain(group[0].Text);
             bool nameRev = groupRev[0];
 
             var speech = new List<(List<TextRun> Runs, ElementStyle Style, bool IsParen, bool Rev)>();
             for (int k = 1; k < group.Count; k++)
             {
-                var st = ElementStyle.Get(group[k].Type);
+                var st = (sp.Layout ?? new DocumentLayout()).Style(group[k].Type);
                 foreach (var l in StyledText.Wrap(group[k].Text, st.Cols))
                     speech.Add((l, st, group[k].Type == ElementType.Parenthetical, groupRev[k]));
             }
@@ -229,7 +231,7 @@ public static class Paginator
         // ------------------------------------------------------------------
         void EmitDual(List<ScreenElement> a, List<bool> aRev, List<ScreenElement> b, List<bool> bRev)
         {
-            var chStyle = ElementStyle.Get(ElementType.Character);
+            var chStyle = (sp.Layout ?? new DocumentLayout()).Style(ElementType.Character);
 
             List<(List<TextRun> Runs, int Col, bool Rev, bool IsName)> Column(List<ScreenElement> g, List<bool> rev, int col)
             {

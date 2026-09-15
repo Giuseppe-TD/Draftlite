@@ -362,7 +362,8 @@ public sealed class PdfOptionsForm : Form
         Controls.Add(new Label { Text = "Formato carta", Left = 14, Top = 17, Width = 100 });
         _paper.SetBounds(120, 14, 140, 23);
         _paper.Items.AddRange(new object[] { "A4", "Letter" });
-        _paper.SelectedItem = current.PaperName == "Letter" ? "Letter" : "A4";
+        _paper.Items.Add("Documento");
+        _paper.SelectedItem = "Documento";
         Controls.Add(_paper);
 
         _titlePage.SetBounds(16, 48, 400, 22); _titlePage.Checked = current.IncludeTitlePage;
@@ -401,7 +402,8 @@ public sealed class PdfOptionsForm : Form
 
         ok.Click += (s, e) =>
         {
-            var ps = (_paper.SelectedItem as string) == "Letter" ? PageSetup.Letter() : PageSetup.A4();
+            var ps = (_paper.SelectedItem as string) == "Documento" ? current.Clone() :
+                (_paper.SelectedItem as string) == "Letter" ? PageSetup.Letter() : PageSetup.A4();
             ps.IncludeTitlePage = _titlePage.Checked;
             ps.PageNumbers = _pageNumbers.Checked;
             ps.SceneNumbers = _sceneNumbers.Checked;

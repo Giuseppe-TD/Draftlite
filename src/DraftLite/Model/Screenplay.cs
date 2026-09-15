@@ -9,6 +9,7 @@ namespace DraftLite.Model;
 /// <summary>La sceneggiatura completa: frontespizio, elementi, stato della revisione.</summary>
 public sealed class Screenplay
 {
+    public DocumentLayout Layout { get; set; }
     public TitlePage TitlePage { get; set; } = new TitlePage();
     public List<ScreenElement> Elements { get; set; } = new List<ScreenElement>();
     public Revision Revision { get; set; } = new Revision();
@@ -46,6 +47,7 @@ public sealed class Screenplay
 
     public Screenplay Clone() => new Screenplay
     {
+        Layout = Layout?.Clone(),
         TitlePage = TitlePage.Clone(),
         Elements = Elements.Select(e => e.Clone()).ToList(),
         Revision = Revision.Clone()
@@ -171,7 +173,8 @@ public sealed class Screenplay
         var els = Compacted();
         var result = new Screenplay
         {
-            TitlePage = TitlePage.Clone(),
+            Layout = Layout?.Clone(),
+        TitlePage = TitlePage.Clone(),
             Revision = Revision.Clone()
         };
         result.TitlePage.Title = (TitlePage.Title ?? string.Empty) + " - " + target;

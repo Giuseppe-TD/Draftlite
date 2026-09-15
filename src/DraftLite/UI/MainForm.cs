@@ -30,7 +30,7 @@ public sealed class MainForm : Form
     };
     private readonly TabControl _sideTabs = new TabControl { Dock = DockStyle.Fill };
     private readonly SplitContainer _split = new SplitContainer { Dock = DockStyle.Fill };
-    private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, Tag = "desk" };
+    private readonly Panel _pageHost = new Panel { Dock = DockStyle.Fill, Tag = "desk", AutoScroll = true };
     private readonly Panel _page = new Panel { Padding = new Padding(34, 18, 14, 10), Tag = "page" };
     private readonly RulerStrip _ruler = new RulerStrip();
     private readonly StatusStrip _status = new StatusStrip();
@@ -388,6 +388,8 @@ public sealed class MainForm : Form
         view.DropDownItems.Add(new ToolStripSeparator());
         view.DropDownItems.Add(Mi("Ingrandisci", Keys.Control | Keys.Oemplus, (s, e) => Zoom(0.1f)));
         view.DropDownItems.Add(Mi("Riduci", Keys.Control | Keys.OemMinus, (s, e) => Zoom(-0.1f)));
+        view.DropDownItems.Add(Mi("Dimensioni del foglio...", Keys.None, (s, e) => EditPageLayout()));
+        view.DropDownItems.Add(Mi("Adatta alla finestra", Keys.Control | Keys.D9, (s, e) => FitPage()));
         view.DropDownItems.Add(Mi("Zoom 100%", Keys.Control | Keys.D0, (s, e) => SetZoom(1f)));
         menu.Items.Add(view);
 
@@ -829,6 +831,8 @@ public sealed class MainForm : Form
         show.Add(Small("note", "Note del copione", "Apre l'elenco delle note", (s, e) => ShowSidePanel(1)));
 
         var zoom = tab.AddGroup("Zoom");
+        zoom.Add(Small("zoom", "Dimensioni foglio...", "Cambia larghezza e margini in centimetri", (s, e) => EditPageLayout()));
+        zoom.Add(Small("zoom", "Adatta alla finestra", "Larghezza automatica (Ctrl+9). Trascina il bordo destro del foglio per regolarla.", (s, e) => FitPage()));
         zoom.Add(Big("zoom", "Zoom 100%", "Riporta la pagina alla misura giusta (Ctrl+0)", (s, e) => SetZoom(1f)));
         zoom.Add(Small("zoomin", "Ingrandisci", "Ctrl + +", (s, e) => Zoom(0.1f)));
         zoom.Add(Small("zoomout", "Riduci", "Ctrl + -", (s, e) => Zoom(-0.1f)));
@@ -913,6 +917,25 @@ public sealed class MainForm : Form
         _pageHost.MouseDown += (s, e) => _editor.Focus();
         _pageHost.Paint += PageHost_Paint;
         _page.Paint += Page_Paint;
+        _pageHost.Scroll += (s, e) => LayoutPage();
+        _page.MouseDown += (s, e) =>
+        {
+            if (e.Button != MouseButtons.Left || e.X < _page.Width - 10) return;
+            _resizingPage = true;
+            _resizeStartX = Cursor.Position.X;
+            _resizeStartZoom = _editor.ZoomFactor;
+            _page.Capture = true;
+        };
+        _page.MouseMove += (s, e) =>
+        {
+            _page.Cursor = _resizingPage || e.X >= _page.Width - 10 ? Cursors.SizeWE : Cursors.Default;
+            if (_resizingPage)
+                SetZoom(_resizeStartZoom + (float)(2.0 * (Cursor.Position.X - _resizeStartX) /
+                    (_editor.DocumentLayout.PaperWidth * _editor.DeviceDpi)));
+        };
+        _page.MouseUp += (s, e) => { _resizingPage = false; _page.Capture = false; };
+        _page.MouseCaptureChanged += (s, e) => { if (!_page.Capture) _resizingPage = false; };
+        _editor.DpiChangedAfterParent += (s, e) => LayoutPage();
         _editor.VScroll += (s, e) => _page.Invalidate();
         _editor.Resize += (s, e) => _page.Invalidate();
         _editor.CaretMoved += (s, e) => { if (_settings.ShowPageBreaks) _page.Invalidate(); };
@@ -1032,32 +1055,82 @@ public sealed class MainForm : Form
         }
     }
 
+    private bool _fitPage = true;
+    private bool _layingOutPage;
+    private bool _resizingPage;
+    private int _resizeStartX;
+    private float _resizeStartZoom;
+
+    private void EditPageLayout()
+    {
+        using var dialog = new PageLayoutForm(_editor.DocumentLayout);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        _editor.ChangeDocumentLayout(dialog.LayoutResult);
+        SetDirty(true);
+        MarkStats();
+        FitPage();
+    }
+
+    private void FitPage()
+    {
+        _fitPage = true;
+        _pageHost.AutoScrollPosition = Point.Empty;
+        LayoutPage();
+    }
+
     private void LayoutPage()
     {
-        int w = Math.Min(_editor.PageWidthPixels + _page.Padding.Horizontal, _pageHost.ClientSize.Width);
-        int x = Math.Max(0, (_pageHost.ClientSize.Width - w) / 2);
-
-        int top = 0;
-        // durante la costruzione Visible e' falso comunque (la finestra non c'e' ancora):
-        // si guarda l'impostazione, non lo stato del controllo
-        if (_settings.ShowRuler)
+        if (_layingOutPage || _pageHost.ClientSize.Width <= 0) return;
+        _layingOutPage = true;
+        try
         {
-            _ruler.Bounds = new Rectangle(0, 0, _pageHost.ClientSize.Width, _ruler.Height);
-            top = _ruler.Height;
-
+            var layout = _editor.DocumentLayout;
+            int available = Math.Max(1, _pageHost.ClientSize.Width - 24);
+            if (_fitPage)
+            {
+                float zoom = (float)Math.Max(0.1, Math.Min(3,
+                    (available - SystemInformation.VerticalScrollBarWidth) /
+                    (layout.PaperWidth * _editor.DeviceDpi)));
+                if (Math.Abs(_editor.ZoomFactor - zoom) > 0.001f)
+                {
+                    _editor.ZoomFactor = zoom;
+                    _editor.ApplyPageWidth();
+                }
+            }
             float scale = _editor.DeviceDpi * _editor.ZoomFactor;
-            _ruler.Update(x, w, x + _page.Padding.Left, scale,
-                          _ruler.MarkerLeftInch, _ruler.MarkerRightInch);
+            _page.Padding = new Padding((int)Math.Round(layout.LeftMargin * scale), 18,
+                (int)Math.Round(layout.RightMargin * scale) + SystemInformation.VerticalScrollBarWidth, 10);
+            int w = (int)Math.Round(layout.PaperWidth * scale) + SystemInformation.VerticalScrollBarWidth;
+            int top = _settings.ShowRuler ? _ruler.Height : 0;
+            _pageHost.AutoScrollMinSize = new Size(w + 24, 0);
+            int x = Math.Max(12, (_pageHost.ClientSize.Width - w) / 2) + _pageHost.AutoScrollPosition.X;
+            _page.Bounds = new Rectangle(x, top, w, Math.Max(0, _pageHost.ClientSize.Height - top));
+            if (_settings.ShowRuler)
+            {
+                _ruler.Bounds = new Rectangle(0, 0, _pageHost.ClientSize.Width, _ruler.Height);
+                _ruler.Update(x, w, x + _page.Padding.Left, scale,
+                    _ruler.MarkerLeftInch, _ruler.MarkerRightInch);
+            }
+            if (_cboZoom != null)
+            {
+                bool saved = _loading;
+                _loading = true;
+                var value = ((int)Math.Round(_editor.ZoomFactor * 100)) + "%";
+                if (!_cboZoom.Items.Contains(value)) _cboZoom.Items.Add(value);
+                _cboZoom.SelectedItem = value;
+                _loading = saved;
+            }
+            _pageHost.Invalidate();
         }
-
-        _page.Bounds = new Rectangle(x, top, w, Math.Max(0, _pageHost.ClientSize.Height - top));
+        finally { _layingOutPage = false; }
     }
 
     private void Zoom(float delta) => SetZoom(_editor.ZoomFactor + delta);
 
     private void SetZoom(float z)
     {
-        _editor.ZoomFactor = Math.Max(0.6f, Math.Min(2.5f, z));
+        _fitPage = false;
+        _editor.ZoomFactor = Math.Max(0.1f, Math.Min(3f, z));
         _editor.ApplyPageWidth();
         LayoutPage();
 
@@ -1151,6 +1224,8 @@ public sealed class MainForm : Form
         _loading = true;
         try
         {
+            _editor.DocumentLayout = new DocumentLayout();
+            _editor.ApplyPageWidth();
             _titlePage = new TitlePage();
             _revision = new Revision();
             _editor.SetElements(new List<ScreenElement>
@@ -1162,6 +1237,7 @@ public sealed class MainForm : Form
         }
         finally { _loading = false; }
 
+        FitPage();
         SetDirty(false);
         RefreshScenes();
         RefreshNotes();
@@ -1170,8 +1246,23 @@ public sealed class MainForm : Form
         _editor.Focus();
     }
 
+    private PageSetup CurrentPageSetup()
+    {
+        var setup = _settings.ToPageSetup();
+        var layout = _editor.DocumentLayout;
+        setup.WidthPt = layout.PaperWidth * 72;
+        setup.HeightPt = layout.PaperHeight * 72;
+        setup.PaperName = Math.Abs(layout.PaperWidth - 8.5) < 0.01 && Math.Abs(layout.PaperHeight - 11) < 0.01
+            ? "Letter" : "Documento";
+        setup.LeftMarginInch = layout.LeftMargin;
+        setup.TopMarginInch = layout.TopMargin;
+        setup.LinesPerPage = Math.Max(10, (int)Math.Floor((layout.PaperHeight - layout.TopMargin - layout.BottomMargin) * 6));
+        return setup;
+    }
+
     private Screenplay CurrentScreenplay() => new Screenplay
     {
+        Layout = _editor.DocumentLayout.Clone(),
         TitlePage = _titlePage,
         Revision = _revision,
         Elements = _editor.GetElements()
@@ -1182,6 +1273,9 @@ public sealed class MainForm : Form
         _loading = true;
         try
         {
+            _editor.DocumentLayout = sp.Layout?.Clone() ?? new DocumentLayout();
+            _editor.DocumentLayout.Normalize();
+            _editor.ApplyPageWidth();
             _titlePage = sp.TitlePage ?? new TitlePage();
             _revision = sp.Revision ?? new Revision();
             _editor.SetElements(sp.Elements.Count > 0
@@ -1192,6 +1286,7 @@ public sealed class MainForm : Form
         }
         finally { _loading = false; }
 
+        FitPage();
         SetDirty(path == null);
         RefreshScenes();
         RefreshNotes();
@@ -1358,7 +1453,7 @@ public sealed class MainForm : Form
 
     private void ExportPdf()
     {
-        using var opt = new PdfOptionsForm(_settings.ToPageSetup());
+        using var opt = new PdfOptionsForm(CurrentPageSetup());
         if (opt.ShowDialog(this) != DialogResult.OK || opt.Setup == null) return;
         _settings.FromPageSetup(opt.Setup);
         MarkStats();
@@ -1407,7 +1502,7 @@ public sealed class MainForm : Form
 
         try
         {
-            PdfExporter.ExportSides(dlg.FileName, sp, pick.Character, _settings.ToPageSetup());
+            PdfExporter.ExportSides(dlg.FileName, sp, pick.Character, CurrentPageSetup());
             OfferOpen(dlg.FileName, "Sides di " + pick.Character + " creati.");
         }
         catch (Exception ex)
@@ -1429,7 +1524,7 @@ public sealed class MainForm : Form
 
         try
         {
-            PdfExporter.ExportReport(dlg.FileName, CurrentScreenplay(), _settings.ToPageSetup());
+            PdfExporter.ExportReport(dlg.FileName, CurrentScreenplay(), CurrentPageSetup());
             OfferOpen(dlg.FileName, "Report creato.");
         }
         catch (Exception ex)
@@ -1678,8 +1773,8 @@ public sealed class MainForm : Form
             for (int k = 0; k < els.Count; k++)
                 if (!els[k].IsEmpty) compactedToParagraph.Add(k);
 
-            var sp = new Screenplay { TitlePage = _titlePage, Revision = _revision, Elements = els };
-            var pages = Paginator.Paginate(sp, _settings.ToPageSetup());
+            var sp = new Screenplay { Layout = _editor.DocumentLayout.Clone(), TitlePage = _titlePage, Revision = _revision, Elements = els };
+            var pages = Paginator.Paginate(sp, CurrentPageSetup());
 
             var breaks = new List<(int, int)>();
             for (int p = 0; p < pages.Count; p++)
@@ -1747,7 +1842,7 @@ public sealed class MainForm : Form
 
         if (_settings.ShowRuler)
         {
-            var st = ElementStyle.Get(type);
+            var st = _editor.DocumentLayout.Style(type);
             _ruler.MarkerLeftInch = st.LeftInch;
             _ruler.MarkerRightInch = st.LeftInch + st.WidthInch;
             _ruler.Invalidate();
@@ -1771,7 +1866,7 @@ public sealed class MainForm : Form
 
     private void ShowReport()
     {
-        using var dlg = new ReportForm(CurrentScreenplay(), _settings.ToPageSetup());
+        using var dlg = new ReportForm(CurrentScreenplay(), CurrentPageSetup());
         dlg.ShowDialog(this);
     }
 
@@ -2069,7 +2164,7 @@ public sealed class MainForm : Form
 
     private void ShowCastList()
     {
-        var stats = ScreenplayStats.Compute(CurrentScreenplay(), _settings.ToPageSetup());
+        var stats = ScreenplayStats.Compute(CurrentScreenplay(), CurrentPageSetup());
         if (stats.Characters.Count == 0)
         {
             MessageBox.Show(this, "Nel copione non c'e' ancora nessun personaggio.", "DraftLite",
@@ -2101,7 +2196,7 @@ public sealed class MainForm : Form
 
         try
         {
-            PdfExporter.ExportSides(dlg.FileName, CurrentScreenplay(), character, _settings.ToPageSetup());
+            PdfExporter.ExportSides(dlg.FileName, CurrentScreenplay(), character, CurrentPageSetup());
             OfferOpen(dlg.FileName, "Sides di " + character + " creati.");
         }
         catch (Exception ex)
@@ -2130,7 +2225,7 @@ public sealed class MainForm : Form
     /// <summary>I rientri non si toccano a mano: li decide il tipo di elemento.</summary>
     private void ShowElementInfo()
     {
-        var st = ElementStyle.Get(_editor.CurrentType);
+        var st = _editor.DocumentLayout.Style(_editor.CurrentType);
         MessageBox.Show(this,
             st.Name + "\r\n\r\n" +
             "Rientro sinistro: " + st.LeftInch.ToString("0.##") + "\"\r\n" +

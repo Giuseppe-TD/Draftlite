@@ -26,7 +26,18 @@ public sealed class ElementStyle
     public bool RightAlign { get; private set; }
 
     public int LeftTwips => (int)Math.Round(LeftInch * TwipsPerInch);
-    public int RightTwips => (int)Math.Round((TextWidthInch - LeftInch - WidthInch) * TwipsPerInch);
+    private double AreaWidthInch = TextWidthInch;
+
+    public ElementStyle WithGeometry(double left, double width, double areaWidth)
+    {
+        var copy = (ElementStyle)MemberwiseClone();
+        copy.LeftInch = left;
+        copy.WidthInch = width;
+        copy.AreaWidthInch = areaWidth;
+        return copy;
+    }
+
+    public int RightTwips => (int)Math.Round((AreaWidthInch - LeftInch - WidthInch) * TwipsPerInch);
     public int SpaceBeforeTwips => SpaceBeforeLines * TwipsPerLine;
 
     /// <summary>Colonna di partenza in caratteri (Courier = 10 cpi).</summary>

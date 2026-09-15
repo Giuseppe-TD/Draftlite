@@ -29,7 +29,7 @@ public static class PdfExporter
 
         double left = setup.LeftMarginInch * 72.0;
         double top = setup.TopMarginInch * 72.0;
-        double rightEdge = left + ElementStyle.TextWidthInch * 72.0;
+        double rightEdge = left + (sp.Layout?.TextWidth ?? ElementStyle.TextWidthInch) * 72.0;
 
         if (setup.IncludeTitlePage && !sp.TitlePage.IsEmpty)
         {
@@ -62,7 +62,7 @@ public static class PdfExporter
             {
                 double y = top + (line.Row + 1) * LineH;
                 double x = line.RightAlign
-                    ? rightEdge - line.Text.Length * CharW
+                    ? left + line.RightInch * 72 - line.Text.Length * CharW
                     : left + line.Col * CharW;
 
                 if (line.Runs != null && line.Runs.Count > 0)
@@ -151,7 +151,7 @@ public static class PdfExporter
             }
         }
 
-        double rightEdge = left + ElementStyle.TextWidthInch * 72.0;
+        double rightEdge = left + (sp.Layout?.TextWidth ?? ElementStyle.TextWidthInch) * 72.0;
         if (!string.IsNullOrWhiteSpace(tp.DraftDate))
             pdf.DrawText(rightEdge - tp.DraftDate.Length * CharW, top + (footRow + 1) * LineH, tp.DraftDate);
 

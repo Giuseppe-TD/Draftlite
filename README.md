@@ -9,6 +9,27 @@ sta zitto su tutto il resto. Niente licenze, niente abbonamenti, un solo eseguib
 
 ---
 
+## Novità 1.6.0: area di scrittura e importazione Final Draft
+
+- **Visualizza → Dimensioni del foglio…**: cambia la larghezza e i margini in centimetri. Il testo si dispone nella nuova larghezza; i rientri si ridimensionano in proporzione.
+- **Adatta alla finestra** (`Ctrl+9`): il foglio bianco occupa lo spazio disponibile e segue il ridimensionamento della finestra.
+- Trascina gli ultimi 10 pixel del bordo destro del foglio per regolare lo zoom. Questa operazione cambia la dimensione a video, mantenendo le misure del documento. A zoom elevato è disponibile lo scorrimento orizzontale.
+- Aprendo `.fdx` o `.fdxt`, vengono lette le dimensioni pagina, i margini verticali e i rientri orizzontali degli `ElementSettings` per i sei tipi supportati. Il foglio si adatta automaticamente alla finestra.
+- La geometria viene conservata nei file `.dlite` (versione 3, lettura compatibile con versione 2), nell'autosalvataggio e nell'esportazione `.fdx`.
+- Il PDF propone **Documento** come formato iniziale, per mantenere le dimensioni importate. La paginazione usa le larghezze dei tipi di paragrafo.
+
+L'importazione non riproduce ogni dettaglio di Final Draft: font, interlinea, rientro della prima riga e formattazioni locali diverse dalle impostazioni del tipo restano gestiti come nella versione precedente. I dialoghi simultanei mantengono le colonne previste dal motore esistente. La numerazione delle pagine può quindi differire da Final Draft.
+
+### Verifiche
+
+```sh
+dotnet build src/DraftLite/DraftLite.csproj -c Release
+dotnet run --project tests/LayoutTests
+```
+
+I controlli coprono misure FDX, cultura italiana, A4 e Letter, dati non validi, isolamento dei documenti, salvataggi FDX/DLite e larghezza di paginazione. La compilazione è stata verificata da macOS; le interazioni WinForms richiedono una prova su Windows.
+
+
 ## La barra
 
 Sei linguette — **File, Home, Inserisci, Formato, Vista, Modifica** — con i comandi raggruppati
@@ -200,8 +221,8 @@ Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Li
 L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.5.0 installer\DraftLite.iss
-# esce in installer\Output\DraftLite-Setup-1.5.0.exe
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.6.0 installer\DraftLite.iss
+# esce in installer\Output\DraftLite-Setup-1.6.0.exe
 ```
 
 La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
@@ -209,7 +230,7 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-git tag v1.5.0 && git push origin v1.5.0
+git tag v1.6.0 && git push origin v1.6.0
 ```
 
 I file della release hanno sempre lo stesso nome, quindi questi due link valgono per sempre e

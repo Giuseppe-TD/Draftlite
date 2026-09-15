@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Xml;
@@ -27,7 +28,7 @@ public static class FdxIO
         if (root == null || !string.Equals(root.Name.LocalName, "FinalDraft", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Il file non sembra un documento Final Draft (.fdx).");
 
-        var sp = new Screenplay();
+        var sp = new Screenplay { Layout = ReadLayout(root) };
 
         var content = root.Elements().FirstOrDefault(e => e.Name.LocalName == "Content");
         if (content != null)
@@ -81,6 +82,65 @@ public static class FdxIO
         if (tp != null) ReadTitlePage(tp, sp.TitlePage);
 
         return sp;
+    }
+
+    private static double Number(XElement e, string name, double fallback)
+        => double.TryParse((string)e?.Attribute(name), NumberStyles.Float,
+            CultureInfo.InvariantCulture, out var n) && double.IsFinite(n) ? n : fallback;
+
+    private static DocumentLayout ReadLayout(XElement root)
+    {
+        var layout = new DocumentLayout();
+        var page = root.Elements().FirstOrDefault(e => e.Name.LocalName == "PageLayout");
+        var size = page?.Elements().FirstOrDefault(e => e.Name.LocalName == "PageSize");
+        layout.PaperWidth = Number(size, "Width", 8.5);
+        layout.PaperHeight = Number(size, "Height", 11);
+        // PageSize e rientri sono in pollici; i margini verticali sono in punti.
+        layout.TopMargin = Number(page, "TopMargin", 72) / 72;
+        layout.BottomMargin = Number(page, "BottomMargin", 72) / 72;
+        layout.Normalize();
+        foreach (var setting in root.Elements().Where(e => e.Name.LocalName == "ElementSettings"))
+        {
+            var name = (string)setting.Attribute("Type") ?? "";
+            var type = MapType(name);
+            if (!string.Equals(FdxType(type), name, StringComparison.OrdinalIgnoreCase)) continue;
+            var spec = setting.Elements().FirstOrDefault(e => e.Name.LocalName == "ParagraphSpec");
+            var left = Number(spec, "LeftIndent", double.NaN);
+            var right = Number(spec, "RightIndent", double.NaN);
+            // RightIndent e' la coordinata del bordo destro, non la distanza dal bordo.
+            if (right < 0) right += layout.PaperWidth;
+            if (double.IsFinite(left) && double.IsFinite(right) && left >= 0 &&
+                right <= layout.PaperWidth && right - left >= 0.1)
+                layout.Paragraphs[type] = new ParagraphLayout { Left = left, Right = right };
+        }
+        if (layout.Paragraphs.Count > 0)
+        {
+            layout.LeftMargin = layout.Paragraphs.Values.Min(p => p.Left);
+            layout.RightMargin = layout.PaperWidth - layout.Paragraphs.Values.Max(p => p.Right);
+        }
+        layout.Normalize();
+        return layout;
+    }
+
+    private static void WriteLayout(XElement root, DocumentLayout layout)
+    {
+        if (layout == null) return;
+        string N(double value) => value.ToString("0.####", CultureInfo.InvariantCulture);
+        root.Add(new XElement("PageLayout",
+            new XAttribute("TopMargin", N(layout.TopMargin * 72)),
+            new XAttribute("BottomMargin", N(layout.BottomMargin * 72)),
+            new XElement("PageSize", new XAttribute("Width", N(layout.PaperWidth)),
+                new XAttribute("Height", N(layout.PaperHeight)))));
+        foreach (var type in ElementStyle.TabCycle)
+        {
+            var style = layout.Style(type);
+            root.Add(new XElement("ElementSettings", new XAttribute("Type", FdxType(type)),
+                new XElement("ParagraphSpec",
+                    new XAttribute("LeftIndent", N(layout.LeftMargin + style.LeftInch)),
+                    new XAttribute("RightIndent", N(layout.LeftMargin + style.LeftInch + style.WidthInch)),
+                    new XAttribute("Alignment", style.RightAlign ? "Right" : "Left"),
+                    new XAttribute("SpaceBefore", style.SpaceBeforeLines * 12))));
+        }
     }
 
     /// <summary>Testo del paragrafo, escluso quello che appartiene a note e sinossi.</summary>
@@ -250,6 +310,7 @@ public static class FdxIO
             new XAttribute("Version", "1"),
             content);
 
+        WriteLayout(root, sp.Layout);
         var tp = sp.TitlePage;
         if (!tp.IsEmpty)
         {

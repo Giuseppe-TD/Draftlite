@@ -1098,8 +1098,13 @@ public sealed class MainForm : Form
                 }
             }
             float scale = _editor.DeviceDpi * _editor.ZoomFactor;
+            // Il RichTextBox incorpora la scrollbar verticale nella propria larghezza.
+            // Il pannello pagina riserva gia' una fascia extra pari alla scrollbar (vedi w sotto):
+            // non va aggiunta anche al padding destro, altrimenti la viewport del testo diventa
+            // piu' stretta della larghezza impostata con EM_SETTARGETDEVICE e le righe vengono
+            // tagliate a destra invece di risultare interamente visibili.
             _page.Padding = new Padding((int)Math.Round(layout.LeftMargin * scale), 18,
-                (int)Math.Round(layout.RightMargin * scale) + SystemInformation.VerticalScrollBarWidth, 10);
+                (int)Math.Round(layout.RightMargin * scale), 10);
             int w = (int)Math.Round(layout.PaperWidth * scale) + SystemInformation.VerticalScrollBarWidth;
             int top = _settings.ShowRuler ? _ruler.Height : 0;
             _pageHost.AutoScrollMinSize = new Size(w + 24, 0);

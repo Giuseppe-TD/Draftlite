@@ -1,4 +1,4 @@
-name: build
+name: Build / Release DraftLite
 
 permissions:
   contents: write
@@ -6,16 +6,19 @@ permissions:
 on:
   push:
     branches: [ main ]
-    tags:
-      - 'v*'        # v1.2.3
-      - '[0-9]*'    # 1.2.3 (senza la v)
-  # quando la release si crea o si modifica dal sito di GitHub
-  release:
-    types: [ published, created, edited, released ]
-
   pull_request:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versione da pubblicare (es. 1.6.2)'
+        required: true
+        type: string
+      create_release:
+        description: 'Crea la Release GitHub'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   build:
@@ -24,6 +27,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -34,8 +39,6 @@ jobs:
         id: paths
         shell: pwsh
         run: |
-          # il repository puo' avere i file alla radice oppure dentro una sottocartella:
-          # si cerca il .csproj e si ricava da li' la radice del progetto
           $csproj = Get-ChildItem -Path . -Recurse -Filter DraftLite.csproj -File | Select-Object -First 1
           if (-not $csproj) { throw "DraftLite.csproj non trovato nel repository" }
 
@@ -47,69 +50,114 @@ jobs:
           "root=$rel"                  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "csproj=$($csproj.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Progetto trovato in: $rel"
-          Write-Host "Csproj: $($csproj.FullName)"
 
-      - name: Versione
+      - name: Determina versione
         id: ver
         shell: pwsh
         run: |
-          $ref  = "${{ github.ref }}"
-          $rtag = "${{ github.event.release.tag_name }}"
-
-          # Directory.Build.props e' l'unica sorgente del numero di versione.
-          # Eseguibile, About, updater, installer e release usano tutti questo valore.
           $root = "${{ steps.paths.outputs.root }}"
           $versionFile = Join-Path $root "Directory.Build.props"
           if (-not (Test-Path $versionFile)) { throw "Directory.Build.props non trovato: $versionFile" }
-          [xml]$versionXml = Get-Content $versionFile -Raw
-          $base = [string](@($versionXml.Project.PropertyGroup.Version)[0])
-          $base = $base.Trim()
-          if ($base -notmatch '^\d+\.\d+\.\d+$') { throw "Versione non valida in Directory.Build.props: $base" }
 
-          # Se si pubblica un tag/release, deve coincidere con la versione del progetto.
-          $tagVersion = $null
-          if (-not [string]::IsNullOrEmpty($rtag)) {
-            $tagVersion = $rtag -replace '^[vV]',''
-          } elseif ($ref -like 'refs/tags/*') {
-            $tagVersion = (($ref -replace '^refs/tags/','') -replace '^[vV]','')
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $base = "${{ inputs.version }}".Trim()
+            if ($base -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Versione non valida '$base'. Usa MAJOR.MINOR.PATCH, per esempio 1.6.2"
+            }
+            $info = $base
+            $release = "true"
           }
-          if ($tagVersion -and $tagVersion -ne $base) {
-            throw "Il tag/release e' $tagVersion ma Directory.Build.props contiene $base. Aggiorna la versione prima di pubblicare."
+          else {
+            [xml]$versionXml = Get-Content $versionFile -Raw
+            $base = [string](@($versionXml.Project.PropertyGroup.Version)[0])
+            $base = $base.Trim()
+            if ($base -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Versione non valida in Directory.Build.props: $base"
+            }
+            $info = "$base-dev.${{ github.run_number }}"
+            $release = "false"
           }
 
-          if ($tagVersion) {
-            $v = $base
-          } else {
-            $v = "$base-dev.${{ github.run_number }}"
+          "numeric=$base"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$info"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "is_release=$release" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Build DraftLite $info"
+
+      # Quando lanci la release dalla pagina Actions, il numero inserito diventa anche
+      # la versione salvata nel repository. Non devi modificare file a mano sul PC.
+      - name: Salva la nuova versione nel repository
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $root = "${{ steps.paths.outputs.root }}"
+          $versionFile = Join-Path $root "Directory.Build.props"
+          [xml]$xml = Get-Content $versionFile -Raw
+          $node = @($xml.Project.PropertyGroup.Version)[0]
+          if ($null -eq $node) { throw "Nodo <Version> non trovato in Directory.Build.props" }
+          $node.InnerText = "${{ steps.ver.outputs.numeric }}"
+
+          $settings = New-Object System.Xml.XmlWriterSettings
+          $settings.Indent = $true
+          $settings.IndentChars = "  "
+          $settings.NewLineChars = "`n"
+          $settings.NewLineHandling = [System.Xml.NewLineHandling]::Replace
+          $settings.OmitXmlDeclaration = $true
+          $writer = [System.Xml.XmlWriter]::Create($versionFile, $settings)
+          $xml.Save($writer)
+          $writer.Close()
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$versionFile"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "chore: version ${{ steps.ver.outputs.numeric }} [skip ci]"
+            git push origin "HEAD:${{ github.ref_name }}"
           }
-          "version=$v"   | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "numeric=$base" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Versione: $v (assembly/file/installer $base)"
+          else {
+            Write-Host "Directory.Build.props e' gia' alla versione richiesta."
+          }
 
       - name: Restore
         run: dotnet restore "${{ steps.paths.outputs.csproj }}"
 
       - name: Publish (win-x64, self-contained)
-        run: >
-          dotnet publish "${{ steps.paths.outputs.csproj }}"
-          -c Release
-          -r win-x64
-          --self-contained true
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
-          -p:EnableCompressionInSingleFile=true
-          -p:PublishReadyToRun=true
-          -p:DebugType=none
-          -p:Version=${{ steps.ver.outputs.numeric }}
-          -p:InformationalVersion=${{ steps.ver.outputs.version }}
-          -o "${{ steps.paths.outputs.root }}/publish"
+        shell: pwsh
+        run: |
+          $v = "${{ steps.ver.outputs.numeric }}"
+          dotnet publish "${{ steps.paths.outputs.csproj }}" `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:PublishReadyToRun=true `
+            -p:DebugType=none `
+            -p:Version=$v `
+            -p:VersionPrefix=$v `
+            -p:AssemblyVersion="$v.0" `
+            -p:FileVersion="$v.0" `
+            -p:InformationalVersion="${{ steps.ver.outputs.version }}" `
+            -o "${{ steps.paths.outputs.root }}/publish"
+
+      - name: Verifica versione EXE
+        shell: pwsh
+        run: |
+          $exe = Join-Path "${{ steps.paths.outputs.root }}" "publish\DraftLite.exe"
+          if (-not (Test-Path $exe)) { throw "DraftLite.exe non trovato" }
+          $expected = "${{ steps.ver.outputs.numeric }}.0"
+          $actual = (Get-Item $exe).VersionInfo.FileVersion
+          Write-Host "FileVersion EXE: $actual"
+          if ($actual -ne $expected) {
+            throw "Versione EXE errata: attesa $expected, trovata $actual"
+          }
 
       - name: Installer (Inno Setup)
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
-            Write-Host "Inno Setup non presente sul runner: lo installo"
             choco install innosetup -y --no-progress
           }
           if (-not (Test-Path $iscc)) {
@@ -117,31 +165,21 @@ jobs:
                      Select-Object -First 1
             if ($found) { $iscc = $found.FullName }
           }
-          if (-not (Test-Path $iscc)) { throw "ISCC.exe non trovato: impossibile creare l'installer" }
+          if (-not (Test-Path $iscc)) { throw "ISCC.exe non trovato" }
 
           $iss = Join-Path "${{ steps.paths.outputs.root }}" "installer\DraftLite.iss"
-          if (-not (Test-Path $iss)) { throw "Script installer non trovato: $iss" }
-
           & $iscc /DMyAppVersion=${{ steps.ver.outputs.numeric }} $iss
-          if ($LASTEXITCODE -ne 0) { throw "Compilazione dell'installer fallita ($LASTEXITCODE)" }
+          if ($LASTEXITCODE -ne 0) { throw "Compilazione installer fallita ($LASTEXITCODE)" }
 
-          $setup = Get-ChildItem (Join-Path "${{ steps.paths.outputs.root }}" "installer\Output\*.exe") | Select-Object -First 1
-          if (-not $setup) { throw "Installer non prodotto" }
-          Write-Host "Installer: $($setup.Name) - $([math]::Round($setup.Length/1MB,1)) MB"
-
-      - name: Prepara i file della release
-        id: dist
+      - name: Prepara i file
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-
-          # Manteniamo sia i nomi stabili (per i link /latest/download) sia quelli
-          # versionati, cosi' dal file scaricato si vede subito quale build e'.
           $root = "${{ steps.paths.outputs.root }}"
           $ver = "${{ steps.ver.outputs.numeric }}"
           $setupSource = Get-ChildItem (Join-Path $root "installer\Output\*.exe") | Select-Object -First 1
           $portableSource = Join-Path $root "publish\DraftLite.exe"
-          if (-not $setupSource) { throw "Installer non trovato per preparare la release" }
+          if (-not $setupSource) { throw "Installer non trovato" }
           if (-not (Test-Path $portableSource)) { throw "Eseguibile portabile non trovato" }
 
           Copy-Item $setupSource.FullName dist\DraftLite-Setup.exe
@@ -150,14 +188,11 @@ jobs:
           Copy-Item $portableSource ("dist\DraftLite-Portabile-{0}.exe" -f $ver)
 
           $notes = @()
-          $notes += "**DraftLite-Setup.exe** - installazione normale: collegamenti, associazione dei file .dlite, disinstallazione dal Pannello di controllo."
+          $notes += "## DraftLite $ver"
           $notes += ""
-          $notes += "**DraftLite-Portabile.exe** - un file solo, si avvia e basta: niente installazione, buono per la chiavetta."
+          $notes += "**DraftLite-Setup.exe** - installazione normale."
           $notes += ""
-          $notes += "Serve Windows 10 o successivo a 64 bit. Non serve installare .NET: e' gia' dentro l'eseguibile."
-          $notes += ""
-          $notes += "Al primo avvio Windows puo' mostrare l'avviso SmartScreen perche' il file non e' firmato:"
-          $notes += "*Altre informazioni* > *Esegui comunque*."
+          $notes += "**DraftLite-Portabile.exe** - versione portabile, senza installazione."
           $notes += ""
           $notes += "| File | Dimensione | SHA-256 |"
           $notes += "|---|---:|---|"
@@ -166,24 +201,22 @@ jobs:
             $mb = [math]::Round($f.Length / 1MB, 1)
             $notes += "| $($f.Name) | $mb MB | ``$hash`` |"
           }
-          $notes -join "`n" | Out-File -FilePath release-notes.md -Encoding utf8
-
-          Get-ChildItem dist | Format-Table Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
-          Get-Content release-notes.md
+          $notes -join "`n" | Out-File release-notes.md -Encoding utf8
 
       - name: Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: DraftLite-win-x64
+          name: DraftLite-${{ steps.ver.outputs.numeric }}-win-x64
           path: dist\*
           if-no-files-found: error
 
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'release'
+      - name: Crea/Aggiorna Release GitHub
+        if: github.event_name == 'workflow_dispatch' && inputs.create_release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
-          name: DraftLite ${{ steps.ver.outputs.version }}
+          tag_name: v${{ steps.ver.outputs.numeric }}
+          name: DraftLite ${{ steps.ver.outputs.numeric }}
+          target_commitish: ${{ github.ref_name }}
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -216,7 +216,6 @@ puoi anche cercare gli aggiornamenti a mano quando ti va.
 Il numero di versione si cambia **in un solo punto**, in `Directory.Build.props`. Il modo più semplice è:
 
 ```powershell
-.\scripts\set-version.ps1 1.6.2
 ```
 
 Da quel valore vengono generati automaticamente `Version`, `FileVersion`, `AssemblyVersion`, Informazioni, updater, installer e release. Il workflow rifiuta un tag che non coincide con la versione del progetto.
@@ -246,7 +245,6 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-.\scripts\set-version.ps1 1.6.2
 git tag v1.6.2 && git push origin v1.6.2
 ```
 
@@ -293,3 +291,8 @@ Due scelte che spiegano il resto:
 ---
 
 Tastiere Digitali srls
+
+
+### Versione / release
+
+Le release si fanno da **GitHub → Actions → Build / Release DraftLite → Run workflow**. Inserisci la versione (es. `1.6.2`): il workflow la applica a EXE, Informazioni, updater, installer, artifact, tag e Release e la salva nel repository.

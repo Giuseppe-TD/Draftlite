@@ -85,7 +85,7 @@ public sealed class MainForm : Form
         BuildUi();
         WireEvents();
 
-        _editor.ZoomFactor = Math.Max(0.5f, Math.Min(3f, _settings.Zoom));
+        _editor.ZoomFactor = Math.Max(0.5f, Math.Min(5f, _settings.Zoom));
         _split.Panel1Collapsed = !_settings.ShowNavigator;
 
         NewDocument();
@@ -914,27 +914,44 @@ public sealed class MainForm : Form
         _editor.DocumentIndexed += (s, e) => { RefreshScenes(); RefreshNotes(); };
 
         _pageHost.Resize += (s, e) => LayoutPage();
-        _pageHost.MouseDown += (s, e) => _editor.Focus();
+        _pageHost.MouseDown += (s, e) =>
+        {
+            // Una fascia anche appena fuori dal bordo rende il resize facile da prendere:
+            // non bisogna centrare esattamente gli ultimi pixel del foglio.
+            if (e.Button == MouseButtons.Left && Math.Abs(e.X - _page.Right) <= 14)
+            {
+                BeginPageResize();
+                return;
+            }
+            _editor.Focus();
+        };
+        _pageHost.MouseMove += (s, e) =>
+        {
+            if (!_resizingPage)
+                _pageHost.Cursor = Math.Abs(e.X - _page.Right) <= 14 ? Cursors.SizeWE : Cursors.Default;
+            else
+                ResizePageFromMouse();
+        };
+        _pageHost.MouseUp += (s, e) => EndPageResize();
+        _pageHost.MouseCaptureChanged += (s, e) => { if (!_pageHost.Capture) EndPageResize(); };
         _pageHost.Paint += PageHost_Paint;
         _page.Paint += Page_Paint;
         _pageHost.Scroll += (s, e) => LayoutPage();
         _page.MouseDown += (s, e) =>
         {
-            if (e.Button != MouseButtons.Left || e.X < _page.Width - 10) return;
-            _resizingPage = true;
-            _resizeStartX = Cursor.Position.X;
-            _resizeStartZoom = _editor.ZoomFactor;
-            _page.Capture = true;
+            if (e.Button != MouseButtons.Left || e.X < _page.Width - 18) return;
+            BeginPageResize();
         };
         _page.MouseMove += (s, e) =>
         {
-            _page.Cursor = _resizingPage || e.X >= _page.Width - 10 ? Cursors.SizeWE : Cursors.Default;
-            if (_resizingPage)
-                SetZoom(_resizeStartZoom + (float)(2.0 * (Cursor.Position.X - _resizeStartX) /
-                    (_editor.DocumentLayout.PaperWidth * _editor.DeviceDpi)));
+            _page.Cursor = _resizingPage || e.X >= _page.Width - 18 ? Cursors.SizeWE : Cursors.Default;
+            if (_resizingPage) ResizePageFromMouse();
         };
-        _page.MouseUp += (s, e) => { _resizingPage = false; _page.Capture = false; };
-        _page.MouseCaptureChanged += (s, e) => { if (!_page.Capture) _resizingPage = false; };
+        _page.MouseUp += (s, e) => EndPageResize();
+        _page.MouseCaptureChanged += (s, e) =>
+        {
+            if (!_page.Capture && !_pageHost.Capture) _resizingPage = false;
+        };
         _editor.DpiChangedAfterParent += (s, e) => LayoutPage();
         _editor.VScroll += (s, e) => _page.Invalidate();
         _editor.Resize += (s, e) => _page.Invalidate();
@@ -1061,6 +1078,36 @@ public sealed class MainForm : Form
     private int _resizeStartX;
     private float _resizeStartZoom;
 
+    private void BeginPageResize()
+    {
+        _resizingPage = true;
+        _resizeStartX = Cursor.Position.X;
+        _resizeStartZoom = _editor.ZoomFactor;
+        // Cattura sul controllo che ha ricevuto il click; durante il trascinamento
+        // continuiamo a ricevere il mouse anche quando il puntatore esce dal bordo.
+        if (_page.RectangleToScreen(_page.ClientRectangle).Contains(Cursor.Position))
+            _page.Capture = true;
+        else
+            _pageHost.Capture = true;
+    }
+
+    private void ResizePageFromMouse()
+    {
+        if (!_resizingPage) return;
+        SetZoom(_resizeStartZoom + (float)(2.0 * (Cursor.Position.X - _resizeStartX) /
+            (_editor.DocumentLayout.PaperWidth * _editor.DeviceDpi)));
+    }
+
+    private void EndPageResize()
+    {
+        if (!_resizingPage) return;
+        _resizingPage = false;
+        if (_page.Capture) _page.Capture = false;
+        if (_pageHost.Capture) _pageHost.Capture = false;
+        _page.Cursor = Cursors.Default;
+        _pageHost.Cursor = Cursors.Default;
+    }
+
     private void EditPageLayout()
     {
         using var dialog = new PageLayoutForm(_editor.DocumentLayout);
@@ -1088,7 +1135,7 @@ public sealed class MainForm : Form
             int available = Math.Max(1, _pageHost.ClientSize.Width - 24);
             if (_fitPage)
             {
-                float zoom = (float)Math.Max(0.1, Math.Min(3,
+                float zoom = (float)Math.Max(0.1, Math.Min(5,
                     (available - SystemInformation.VerticalScrollBarWidth) /
                     (layout.PaperWidth * _editor.DeviceDpi)));
                 if (Math.Abs(_editor.ZoomFactor - zoom) > 0.001f)
@@ -1098,11 +1145,11 @@ public sealed class MainForm : Form
                 }
             }
             float scale = _editor.DeviceDpi * _editor.ZoomFactor;
-            // Il RichTextBox incorpora la scrollbar verticale nella propria larghezza.
-            // Il pannello pagina riserva gia' una fascia extra pari alla scrollbar (vedi w sotto):
-            // non va aggiunta anche al padding destro, altrimenti la viewport del testo diventa
-            // piu' stretta della larghezza impostata con EM_SETTARGETDEVICE e le righe vengono
-            // tagliate a destra invece di risultare interamente visibili.
+            // Il RichTextBox ha la scrollbar verticale DENTRO la propria larghezza.
+            // Il foglio riceve quindi una fascia extra pari alla scrollbar, ma questa
+            // NON va aggiunta anche al padding destro: altrimenti l'area visibile del
+            // testo diventa piu' stretta della larghezza di impaginazione e le righe FDX
+            // risultano tagliate a destra.
             _page.Padding = new Padding((int)Math.Round(layout.LeftMargin * scale), 18,
                 (int)Math.Round(layout.RightMargin * scale), 10);
             int w = (int)Math.Round(layout.PaperWidth * scale) + SystemInformation.VerticalScrollBarWidth;
@@ -1135,7 +1182,7 @@ public sealed class MainForm : Form
     private void SetZoom(float z)
     {
         _fitPage = false;
-        _editor.ZoomFactor = Math.Max(0.1f, Math.Min(3f, z));
+        _editor.ZoomFactor = Math.Max(0.1f, Math.Min(5f, z));
         _editor.ApplyPageWidth();
         LayoutPage();
 

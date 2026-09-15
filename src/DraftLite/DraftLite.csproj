@@ -13,9 +13,7 @@
     <Product>DraftLite</Product>
     <Company>Tastiere Digitali srls</Company>
     <Description>Scrittura di sceneggiature: la base di Final Draft, senza il resto.</Description>
-    <Version>1.6.0</Version>
-    <FileVersion>1.6.0.0</FileVersion>
-    <AssemblyVersion>1.6.0.0</AssemblyVersion>
+    <!-- Versione ereditata da Directory.Build.props alla radice. -->
 
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>

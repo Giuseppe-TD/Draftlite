@@ -1,4 +1,4 @@
-# Verifica della versione 1.6.0
+# Verifica della serie 1.6 (aggiornata alla 1.6.1)
 
 ## Eseguito
 

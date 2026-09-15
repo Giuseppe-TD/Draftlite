@@ -1,0 +1,9 @@
+<Project>
+  <!-- Unica sorgente del numero di versione di DraftLite. -->
+  <PropertyGroup>
+    <Version>1.6.1</Version>
+    <FileVersion>$(Version).0</FileVersion>
+    <AssemblyVersion>$(Version).0</AssemblyVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+  </PropertyGroup>
+</Project>

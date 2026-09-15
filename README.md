@@ -9,6 +9,12 @@ sta zitto su tutto il resto. Niente licenze, niente abbonamenti, un solo eseguib
 
 ---
 
+## 1.6.1: correzioni area di scrittura e versionamento
+
+- Corretto il taglio a destra dei documenti importati da Final Draft: la scrollbar verticale non riduce più la larghezza utile del testo.
+- Il bordo destro del foglio è più semplice da trascinare: la zona di presa è più larga e funziona anche appena fuori dalla pagina.
+- `Directory.Build.props` alla radice è l'unica sorgente del numero di versione. Eseguibile, finestra Informazioni, updater, installer e release GitHub usano tutti lo stesso valore.
+
 ## Novità 1.6.0: area di scrittura e importazione Final Draft
 
 - **Visualizza → Dimensioni del foglio…**: cambia la larghezza e i margini in centimetri. Il testo si dispone nella nuova larghezza; i rientri si ridimensionano in proporzione.
@@ -207,6 +213,14 @@ puoi anche cercare gli aggiornamenti a mano quando ti va.
 
 ## Compilare
 
+Il numero di versione si cambia **in un solo punto**, in `Directory.Build.props`. Il modo più semplice è:
+
+```powershell
+.\scripts\set-version.ps1 1.6.2
+```
+
+Da quel valore vengono generati automaticamente `Version`, `FileVersion`, `AssemblyVersion`, Informazioni, updater, installer e release. Il workflow rifiuta un tag che non coincide con la versione del progetto.
+
 ```bash
 dotnet build src/DraftLite/DraftLite.csproj -c Release
 
@@ -221,8 +235,10 @@ Il progetto ha `EnableWindowsTargeting`, quindi compila (non esegue) anche da Li
 L'installer si costruisce con [Inno Setup 6](https://jrsoftware.org/isinfo.php), dopo il publish:
 
 ```powershell
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=1.6.0 installer\DraftLite.iss
-# esce in installer\Output\DraftLite-Setup-1.6.0.exe
+[xml]$vp = Get-Content .\Directory.Build.props -Raw
+$v = [string](@($vp.Project.PropertyGroup.Version)[0])
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DMyAppVersion=$v" installer\DraftLite.iss
+# il nome prodotto contiene automaticamente la stessa versione dell'app
 ```
 
 La build ufficiale la fa GitHub Actions: ogni push su `main` produce gli artifact (installer e
@@ -230,7 +246,8 @@ portabile), un tag `v*` pubblica la release. Inno Setup se non c'è sul runner v
 dal workflow.
 
 ```bash
-git tag v1.6.0 && git push origin v1.6.0
+.\scripts\set-version.ps1 1.6.2
+git tag v1.6.2 && git push origin v1.6.2
 ```
 
 I file della release hanno sempre lo stesso nome, quindi questi due link valgono per sempre e
